@@ -468,6 +468,45 @@
             line-height: 1.6;
         }
 
+        /* 邮箱复制功能样式 */
+        .email-copyable {
+            transition: all 0.2s ease;
+            border-radius: 4px;
+            padding: 2px 4px;
+            margin: 0 2px;
+        }
+
+        .email-copyable:hover {
+            background-color: #f1f5f9;
+            transform: translateY(-1px);
+        }
+
+        .email-copyable:active {
+            transform: translateY(0);
+            background-color: #e2e8f0;
+        }
+
+        .copy-icon {
+            transition: opacity 0.2s ease;
+        }
+
+        .email-copyable:hover + .copy-icon {
+            opacity: 1 !important;
+        }
+
+        /* 复制成功动画 */
+        @keyframes copySuccess {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+
+        .copy-success {
+            animation: copySuccess 0.3s ease;
+            background-color: #dcfce7 !important;
+            color: #16a34a !important;
+        }
+
         /* 工具类 */
         .hidden { display: none !important; }
 
@@ -1512,7 +1551,15 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                         <!-- 账户信息和操作按钮 -->
                         <div class="flex items-center justify-between mb-4">
                             <div>
-                                <h3 class="font-semibold">当前账户：<span id="currentAccountEmail" class="text-sm font-medium" style="color: #3b82f6;"></span></h3>
+                                <h3 class="font-semibold">当前账户：
+                                    <span id="currentAccountEmail"
+                                          class="text-sm font-medium email-copyable"
+                                          style="color: #3b82f6; cursor: pointer; position: relative;"
+                                          onclick="copyEmailAddress(this.textContent)"
+                                          title="点击复制邮箱地址">
+                                    </span>
+                                    <span class="copy-icon" style="margin-left: 6px; opacity: 0.6; font-size: 0.8em;">📋</span>
+                                </h3>
                                 <p class="text-sm" style="color: #64748b;">最后更新：<span id="lastUpdateTime">-</span></p>
                             </div>
                             <div class="flex gap-2">
@@ -2120,6 +2167,60 @@ example3@outlook.com----password3----refresh_token_here_3----client_id_here_3`;
                 showNotification('Base URL已复制到剪贴板', 'success');
             }).catch(() => {
                 showNotification('复制失败，请手动复制', 'error');
+            });
+        }
+
+        function copyEmailAddress(emailAddress) {
+            // 清理邮箱地址（去除可能的空格和特殊字符）
+            const cleanEmail = emailAddress.trim();
+
+            if (!cleanEmail) {
+                showNotification('邮箱地址为空', 'error');
+                return;
+            }
+
+            // 复制到剪贴板
+            navigator.clipboard.writeText(cleanEmail).then(() => {
+                // 显示成功通知
+                showNotification(`邮箱地址已复制: ${cleanEmail}`, 'success');
+
+                // 添加视觉反馈
+                const emailElement = document.getElementById('currentAccountEmail');
+                if (emailElement) {
+                    emailElement.classList.add('copy-success');
+                    setTimeout(() => {
+                        emailElement.classList.remove('copy-success');
+                    }, 300);
+                }
+            }).catch((error) => {
+                console.error('复制失败:', error);
+
+                // 降级方案：尝试使用旧的复制方法
+                try {
+                    const textArea = document.createElement('textarea');
+                    textArea.value = cleanEmail;
+                    textArea.style.position = 'fixed';
+                    textArea.style.opacity = '0';
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textArea);
+
+                    showNotification(`邮箱地址已复制: ${cleanEmail}`, 'success');
+                } catch (fallbackError) {
+                    console.error('降级复制方案也失败:', fallbackError);
+                    showNotification('复制失败，请手动复制邮箱地址', 'error');
+
+                    // 选中文本以便用户手动复制
+                    const emailElement = document.getElementById('currentAccountEmail');
+                    if (emailElement && window.getSelection) {
+                        const selection = window.getSelection();
+                        const range = document.createRange();
+                        range.selectNodeContents(emailElement);
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+                    }
+                }
             });
         }
 
