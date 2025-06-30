@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  outlook-email-client:
+    build: .
+    container_name: outlook-email-api
+    ports:
+      - "8000:8000"
+    volumes:
+      # 数据持久化 - 保存用户账户信息
+      - ./data:/app/data
+      # 可选：如果需要自定义配置文件
+      - ./accounts.json:/app/accounts.json
+    environment:
+      # 可以通过环境变量覆盖默认配置
+      - PYTHONUNBUFFERED=1
+      - HOST=0.0.0.0
+      - PORT=8000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - outlook-network
+
+networks:
+  outlook-network:
+    driver: bridge
+
+volumes:
+  outlook-data:
+    driver: local 

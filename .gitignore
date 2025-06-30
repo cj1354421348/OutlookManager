@@ -1,0 +1,4 @@
+.vscode
+__pycache__
+accounts.json
+.DS_Store
