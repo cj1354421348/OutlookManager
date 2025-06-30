@@ -1115,11 +1115,11 @@ if __name__ == "__main__":
 
     # 启动配置
     HOST = "0.0.0.0"
-    PORT = 8001
+    PORT = 8000
 
     logger.info(f"Starting Outlook Email Management System on {HOST}:{PORT}")
-    logger.info("Access the web interface at: http://localhost:8001")
-    logger.info("Access the API documentation at: http://localhost:8001/docs")
+    logger.info("Access the web interface at: http://localhost:8000")
+    logger.info("Access the API documentation at: http://localhost:8000/docs")
 
     uvicorn.run(
         app,
