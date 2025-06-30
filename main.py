@@ -1,26 +1,37 @@
+"""
+Outlook邮件管理系统 - 主应用模块
+
+基于FastAPI和IMAP协议的高性能邮件管理系统
+支持多账户管理、邮件查看、搜索过滤等功能
+
+Author: Outlook Manager Team
+Version: 1.0.0
+"""
+
 import asyncio
+import email
+import imaplib
 import json
 import logging
-import email
 import re
 import socket
 import threading
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Optional, List
+from itertools import groupby
 from pathlib import Path
-from queue import Queue, Empty
+from queue import Empty, Queue
+from typing import AsyncGenerator, List, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from pydantic import BaseModel, EmailStr
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
-import imaplib
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from itertools import groupby
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, EmailStr
 
 
 
@@ -28,31 +39,55 @@ from itertools import groupby
 # 配置常量
 # ============================================================================
 
+# 文件路径配置
 ACCOUNTS_FILE = "accounts.json"
+
+# OAuth2配置
 TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
+OAUTH_SCOPE = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
+
+# IMAP服务器配置
 IMAP_SERVER = "outlook.live.com"
 IMAP_PORT = 993
 
-# IMAP连接池配置
+# 连接池配置
 MAX_CONNECTIONS = 5
 CONNECTION_TIMEOUT = 30
 SOCKET_TIMEOUT = 15
 
-# 配置日志
-logging.basicConfig(level=logging.INFO)
+# 缓存配置
+CACHE_EXPIRE_TIME = 60  # 缓存过期时间（秒）
+
+# 日志配置
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# 数据模型 (Pydantic)
+# 数据模型 (Pydantic Models)
 # ============================================================================
 
 class AccountCredentials(BaseModel):
+    """账户凭证模型"""
     email: EmailStr
     refresh_token: str
     client_id: str
 
+    class Config:
+        schema_extra = {
+            "example": {
+                "email": "user@outlook.com",
+                "refresh_token": "0.AXoA...",
+                "client_id": "your-client-id"
+            }
+        }
+
+
 class EmailItem(BaseModel):
+    """邮件项目模型"""
     message_id: str
     folder: str
     subject: str
@@ -62,7 +97,23 @@ class EmailItem(BaseModel):
     has_attachments: bool = False
     sender_initial: str = "?"
 
+    class Config:
+        schema_extra = {
+            "example": {
+                "message_id": "INBOX-123",
+                "folder": "INBOX",
+                "subject": "Welcome to Augment Code",
+                "from_email": "noreply@augmentcode.com",
+                "date": "2024-01-01T12:00:00",
+                "is_read": False,
+                "has_attachments": False,
+                "sender_initial": "A"
+            }
+        }
+
+
 class EmailListResponse(BaseModel):
+    """邮件列表响应模型"""
     email_id: str
     folder_view: str
     page: int
@@ -70,14 +121,18 @@ class EmailListResponse(BaseModel):
     total_emails: int
     emails: List[EmailItem]
 
+
 class DualViewEmailResponse(BaseModel):
+    """双栏视图邮件响应模型"""
     email_id: str
     inbox_emails: List[EmailItem]
     junk_emails: List[EmailItem]
     inbox_total: int
     junk_total: int
 
+
 class EmailDetailsResponse(BaseModel):
+    """邮件详情响应模型"""
     message_id: str
     subject: str
     from_email: str
@@ -86,16 +141,22 @@ class EmailDetailsResponse(BaseModel):
     body_plain: Optional[str] = None
     body_html: Optional[str] = None
 
+
 class AccountResponse(BaseModel):
+    """账户操作响应模型"""
     email_id: str
     message: str
 
+
 class AccountInfo(BaseModel):
+    """账户信息模型"""
     email_id: str
     client_id: str
     status: str = "active"
 
+
 class AccountListResponse(BaseModel):
+    """账户列表响应模型"""
     total_accounts: int
     accounts: List[AccountInfo]
 
@@ -105,119 +166,213 @@ class AccountListResponse(BaseModel):
 # ============================================================================
 
 class IMAPConnectionPool:
-    """IMAP连接池，提高连接复用和性能"""
+    """
+    IMAP连接池管理器
 
-    def __init__(self, max_connections=MAX_CONNECTIONS):
+    提供连接复用、自动重连、连接状态监控等功能
+    优化IMAP连接性能，减少连接建立开销
+    """
+
+    def __init__(self, max_connections: int = MAX_CONNECTIONS):
+        """
+        初始化连接池
+
+        Args:
+            max_connections: 每个邮箱的最大连接数
+        """
         self.max_connections = max_connections
         self.connections = {}  # {email: Queue of connections}
-        self.connection_count = {}  # {email: count}
+        self.connection_count = {}  # {email: active connection count}
         self.lock = threading.Lock()
+        logger.info(f"Initialized IMAP connection pool with max_connections={max_connections}")
 
-    def _create_connection(self, email: str, access_token: str):
-        """创建新的IMAP连接"""
+    def _create_connection(self, email: str, access_token: str) -> imaplib.IMAP4_SSL:
+        """
+        创建新的IMAP连接
+
+        Args:
+            email: 邮箱地址
+            access_token: OAuth2访问令牌
+
+        Returns:
+            IMAP4_SSL: 已认证的IMAP连接
+
+        Raises:
+            Exception: 连接创建失败
+        """
         try:
-            # 设置socket超时
+            # 设置全局socket超时
             socket.setdefaulttimeout(SOCKET_TIMEOUT)
 
-            # 创建IMAP连接
+            # 创建SSL IMAP连接
             imap_client = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
 
-            # 设置更短的超时时间
+            # 设置连接超时
             imap_client.sock.settimeout(CONNECTION_TIMEOUT)
 
             # XOAUTH2认证
             auth_string = f"user={email}\1auth=Bearer {access_token}\1\1".encode('utf-8')
-            imap_client.authenticate('XOAUTH2', lambda x: auth_string)
+            imap_client.authenticate('XOAUTH2', lambda _: auth_string)
 
-            logger.info(f"Created new IMAP connection for {email}")
+            logger.info(f"Successfully created IMAP connection for {email}")
             return imap_client
 
         except Exception as e:
             logger.error(f"Failed to create IMAP connection for {email}: {e}")
             raise
 
-    def get_connection(self, email: str, access_token: str):
-        """获取IMAP连接"""
+    def get_connection(self, email: str, access_token: str) -> imaplib.IMAP4_SSL:
+        """
+        获取IMAP连接（从池中复用或创建新连接）
+
+        Args:
+            email: 邮箱地址
+            access_token: OAuth2访问令牌
+
+        Returns:
+            IMAP4_SSL: 可用的IMAP连接
+
+        Raises:
+            Exception: 无法获取连接
+        """
         with self.lock:
+            # 初始化邮箱的连接池
             if email not in self.connections:
                 self.connections[email] = Queue(maxsize=self.max_connections)
                 self.connection_count[email] = 0
 
             connection_queue = self.connections[email]
 
-            # 尝试从池中获取连接
+            # 尝试从池中获取现有连接
             try:
                 connection = connection_queue.get_nowait()
-                # 测试连接是否有效
+                # 测试连接有效性
                 try:
                     connection.noop()
-                    logger.debug(f"Reused IMAP connection for {email}")
+                    logger.debug(f"Reused existing IMAP connection for {email}")
                     return connection
-                except:
-                    # 连接无效，创建新连接
-                    logger.debug(f"Connection invalid for {email}, creating new one")
-                    pass
+                except Exception:
+                    # 连接已失效，需要创建新连接
+                    logger.debug(f"Existing connection invalid for {email}, creating new one")
+                    self.connection_count[email] -= 1
             except Empty:
+                # 池中没有可用连接
                 pass
 
-            # 创建新连接
+            # 检查是否可以创建新连接
             if self.connection_count[email] < self.max_connections:
                 connection = self._create_connection(email, access_token)
                 self.connection_count[email] += 1
                 return connection
             else:
                 # 达到最大连接数，等待可用连接
-                logger.warning(f"Max connections reached for {email}, waiting...")
-                return connection_queue.get(timeout=30)
+                logger.warning(f"Max connections ({self.max_connections}) reached for {email}, waiting...")
+                try:
+                    return connection_queue.get(timeout=30)
+                except Exception as e:
+                    logger.error(f"Timeout waiting for connection for {email}: {e}")
+                    raise
 
-    def return_connection(self, email: str, connection):
-        """归还连接到池中"""
-        if email in self.connections:
-            try:
-                # 检查连接状态
-                connection.noop()
-                self.connections[email].put_nowait(connection)
-                logger.debug(f"Returned IMAP connection for {email}")
-            except:
-                # 连接已断开，减少计数
-                with self.lock:
-                    self.connection_count[email] -= 1
-                logger.debug(f"Discarded invalid connection for {email}")
+    def return_connection(self, email: str, connection: imaplib.IMAP4_SSL) -> None:
+        """
+        归还连接到池中
 
-    def close_all_connections(self, email: str = None):
-        """关闭所有连接"""
+        Args:
+            email: 邮箱地址
+            connection: 要归还的IMAP连接
+        """
+        if email not in self.connections:
+            logger.warning(f"Attempting to return connection for unknown email: {email}")
+            return
+
+        try:
+            # 测试连接状态
+            connection.noop()
+            # 连接有效，归还到池中
+            self.connections[email].put_nowait(connection)
+            logger.debug(f"Successfully returned IMAP connection for {email}")
+        except Exception as e:
+            # 连接已失效，减少计数并丢弃
+            with self.lock:
+                if email in self.connection_count:
+                    self.connection_count[email] = max(0, self.connection_count[email] - 1)
+            logger.debug(f"Discarded invalid connection for {email}: {e}")
+
+    def close_all_connections(self, email: str = None) -> None:
+        """
+        关闭所有连接
+
+        Args:
+            email: 指定邮箱地址，如果为None则关闭所有邮箱的连接
+        """
         with self.lock:
             if email:
+                # 关闭指定邮箱的所有连接
                 if email in self.connections:
+                    closed_count = 0
                     while not self.connections[email].empty():
                         try:
                             conn = self.connections[email].get_nowait()
                             conn.logout()
-                        except:
-                            pass
+                            closed_count += 1
+                        except Exception as e:
+                            logger.debug(f"Error closing connection: {e}")
+
                     self.connection_count[email] = 0
+                    logger.info(f"Closed {closed_count} connections for {email}")
             else:
+                # 关闭所有邮箱的连接
+                total_closed = 0
                 for email_key in list(self.connections.keys()):
+                    count_before = self.connection_count.get(email_key, 0)
                     self.close_all_connections(email_key)
+                    total_closed += count_before
+                logger.info(f"Closed total {total_closed} connections for all accounts")
+
+# ============================================================================
+# 全局实例和缓存管理
+# ============================================================================
 
 # 全局连接池实例
 imap_pool = IMAPConnectionPool()
 
-# 简单的内存缓存
-email_cache = {}
-email_count_cache = {}  # 存储邮件总数，用于检测新邮件
-CACHE_EXPIRE_TIME = 60  # 缩短到1分钟缓存，更快获取新邮件
+# 内存缓存存储
+email_cache = {}  # 邮件列表缓存
+email_count_cache = {}  # 邮件总数缓存，用于检测新邮件
+
 
 def get_cache_key(email: str, folder: str, page: int, page_size: int) -> str:
-    """生成缓存键"""
+    """
+    生成缓存键
+
+    Args:
+        email: 邮箱地址
+        folder: 文件夹名称
+        page: 页码
+        page_size: 每页大小
+
+    Returns:
+        str: 缓存键
+    """
     return f"{email}:{folder}:{page}:{page_size}"
 
+
 def get_cached_emails(cache_key: str, force_refresh: bool = False):
-    """获取缓存的邮件列表"""
+    """
+    获取缓存的邮件列表
+
+    Args:
+        cache_key: 缓存键
+        force_refresh: 是否强制刷新缓存
+
+    Returns:
+        缓存的数据或None
+    """
     if force_refresh:
-        # 强制刷新，删除缓存
+        # 强制刷新，删除现有缓存
         if cache_key in email_cache:
             del email_cache[cache_key]
+            logger.debug(f"Force refresh: removed cache for {cache_key}")
         return None
 
     if cache_key in email_cache:
@@ -226,122 +381,205 @@ def get_cached_emails(cache_key: str, force_refresh: bool = False):
             logger.debug(f"Cache hit for {cache_key}")
             return cached_data
         else:
-            # 缓存过期，删除
+            # 缓存已过期，删除
             del email_cache[cache_key]
+            logger.debug(f"Cache expired for {cache_key}")
+
     return None
 
-def set_cached_emails(cache_key: str, data):
-    """设置邮件列表缓存"""
+
+def set_cached_emails(cache_key: str, data) -> None:
+    """
+    设置邮件列表缓存
+
+    Args:
+        cache_key: 缓存键
+        data: 要缓存的数据
+    """
     email_cache[cache_key] = (data, time.time())
     logger.debug(f"Cache set for {cache_key}")
 
-def clear_email_cache(email: str = None):
-    """清除邮件缓存"""
+
+def clear_email_cache(email: str = None) -> None:
+    """
+    清除邮件缓存
+
+    Args:
+        email: 指定邮箱地址，如果为None则清除所有缓存
+    """
     if email:
         # 清除特定邮箱的缓存
         keys_to_delete = [key for key in email_cache.keys() if key.startswith(f"{email}:")]
         for key in keys_to_delete:
             del email_cache[key]
-        logger.info(f"Cleared cache for {email}")
+        logger.info(f"Cleared cache for {email} ({len(keys_to_delete)} entries)")
     else:
         # 清除所有缓存
+        cache_count = len(email_cache)
         email_cache.clear()
-        logger.info("Cleared all email cache")
+        email_count_cache.clear()
+        logger.info(f"Cleared all email cache ({cache_count} entries)")
 
 # ============================================================================
-# 辅助函数
+# 邮件处理辅助函数
 # ============================================================================
 
 def decode_header_value(header_value: str) -> str:
-    """解码邮件头字段"""
+    """
+    解码邮件头字段
+
+    处理各种编码格式的邮件头部信息，如Subject、From等
+
+    Args:
+        header_value: 原始头部值
+
+    Returns:
+        str: 解码后的字符串
+    """
     if not header_value:
         return ""
-    
+
     try:
         decoded_parts = decode_header(str(header_value))
         decoded_string = ""
+
         for part, charset in decoded_parts:
             if isinstance(part, bytes):
                 try:
-                    decoded_string += part.decode(charset if charset else 'utf-8', 'replace')
+                    # 使用指定编码或默认UTF-8解码
+                    encoding = charset if charset else 'utf-8'
+                    decoded_string += part.decode(encoding, errors='replace')
                 except (LookupError, UnicodeDecodeError):
-                    decoded_string += part.decode('utf-8', 'replace')
+                    # 编码失败时使用UTF-8强制解码
+                    decoded_string += part.decode('utf-8', errors='replace')
             else:
                 decoded_string += str(part)
-        return decoded_string
-    except Exception:
+
+        return decoded_string.strip()
+    except Exception as e:
+        logger.warning(f"Failed to decode header value '{header_value}': {e}")
         return str(header_value) if header_value else ""
 
 
 def extract_email_content(email_message: email.message.EmailMessage) -> tuple[str, str]:
-    """提取邮件的纯文本和HTML内容"""
+    """
+    提取邮件的纯文本和HTML内容
+
+    Args:
+        email_message: 邮件消息对象
+
+    Returns:
+        tuple[str, str]: (纯文本内容, HTML内容)
+    """
     body_plain = ""
     body_html = ""
-    
-    if email_message.is_multipart():
-        for part in email_message.walk():
-            content_type = part.get_content_type()
-            content_disposition = str(part.get("Content-Disposition", ""))
-            
-            if 'attachment' not in content_disposition.lower():
-                try:
-                    charset = part.get_content_charset() or 'utf-8'
-                    payload = part.get_payload(decode=True)
-                    if payload:
-                        decoded_content = payload.decode(charset, errors='replace')
-                        
-                        if content_type == 'text/plain' and not body_plain:
-                            body_plain = decoded_content
-                        elif content_type == 'text/html' and not body_html:
-                            body_html = decoded_content
-                except Exception as e:
-                    logger.warning(f"Failed to decode email part: {e}")
-    else:
-        try:
-            charset = email_message.get_content_charset() or 'utf-8'
-            payload = email_message.get_payload(decode=True)
-            if payload:
-                content = payload.decode(charset, errors='replace')
-                content_type = email_message.get_content_type()
-                
-                if content_type == 'text/plain':
-                    body_plain = content
-                elif content_type == 'text/html':
-                    body_html = content
-                else:
-                    body_plain = content  # 默认当作纯文本处理
-        except Exception as e:
-            logger.warning(f"Failed to decode email body: {e}")
-    
-    return body_plain, body_html
+
+    try:
+        if email_message.is_multipart():
+            # 处理多部分邮件
+            for part in email_message.walk():
+                content_type = part.get_content_type()
+                content_disposition = str(part.get("Content-Disposition", ""))
+
+                # 跳过附件
+                if 'attachment' not in content_disposition.lower():
+                    try:
+                        charset = part.get_content_charset() or 'utf-8'
+                        payload = part.get_payload(decode=True)
+
+                        if payload:
+                            decoded_content = payload.decode(charset, errors='replace')
+
+                            if content_type == 'text/plain' and not body_plain:
+                                body_plain = decoded_content
+                            elif content_type == 'text/html' and not body_html:
+                                body_html = decoded_content
+
+                    except Exception as e:
+                        logger.warning(f"Failed to decode email part ({content_type}): {e}")
+        else:
+            # 处理单部分邮件
+            try:
+                charset = email_message.get_content_charset() or 'utf-8'
+                payload = email_message.get_payload(decode=True)
+
+                if payload:
+                    content = payload.decode(charset, errors='replace')
+                    content_type = email_message.get_content_type()
+
+                    if content_type == 'text/plain':
+                        body_plain = content
+                    elif content_type == 'text/html':
+                        body_html = content
+                    else:
+                        # 默认当作纯文本处理
+                        body_plain = content
+
+            except Exception as e:
+                logger.warning(f"Failed to decode single-part email body: {e}")
+
+    except Exception as e:
+        logger.error(f"Error extracting email content: {e}")
+
+    return body_plain.strip(), body_html.strip()
 
 
 # ============================================================================
-# 凭证管理模块
+# 账户凭证管理模块
 # ============================================================================
 
 async def get_account_credentials(email_id: str) -> AccountCredentials:
-    """从accounts.json获取账户凭证"""
+    """
+    从accounts.json文件获取指定邮箱的账户凭证
+
+    Args:
+        email_id: 邮箱地址
+
+    Returns:
+        AccountCredentials: 账户凭证对象
+
+    Raises:
+        HTTPException: 账户不存在或文件读取失败
+    """
     try:
-        if not Path(ACCOUNTS_FILE).exists():
-            raise HTTPException(status_code=404, detail="Account not found")
-        
-        with open(ACCOUNTS_FILE, 'r', encoding='utf-8') as f:
+        # 检查账户文件是否存在
+        accounts_path = Path(ACCOUNTS_FILE)
+        if not accounts_path.exists():
+            logger.warning(f"Accounts file {ACCOUNTS_FILE} not found")
+            raise HTTPException(status_code=404, detail="No accounts configured")
+
+        # 读取账户数据
+        with open(accounts_path, 'r', encoding='utf-8') as f:
             accounts = json.load(f)
-        
+
+        # 检查指定邮箱是否存在
         if email_id not in accounts:
-            raise HTTPException(status_code=404, detail="Account not found")
-        
+            logger.warning(f"Account {email_id} not found in accounts file")
+            raise HTTPException(status_code=404, detail=f"Account {email_id} not found")
+
+        # 验证账户数据完整性
         account_data = accounts[email_id]
+        required_fields = ['refresh_token', 'client_id']
+        missing_fields = [field for field in required_fields if not account_data.get(field)]
+
+        if missing_fields:
+            logger.error(f"Account {email_id} missing required fields: {missing_fields}")
+            raise HTTPException(status_code=500, detail="Account configuration incomplete")
+
         return AccountCredentials(
             email=email_id,
             refresh_token=account_data['refresh_token'],
             client_id=account_data['client_id']
         )
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="Failed to read accounts file")
+
+    except HTTPException:
+        # 重新抛出HTTP异常
+        raise
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON in accounts file: {e}")
+        raise HTTPException(status_code=500, detail="Accounts file format error")
     except Exception as e:
-        logger.error(f"Error getting account credentials: {e}")
+        logger.error(f"Unexpected error getting account credentials for {email_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
@@ -407,37 +645,61 @@ async def get_all_accounts() -> AccountListResponse:
 
 
 # ============================================================================
-# OAuth2令牌获取模块
+# OAuth2令牌管理模块
 # ============================================================================
 
 async def get_access_token(credentials: AccountCredentials) -> str:
-    """使用refresh_token获取access_token"""
-    data = {
+    """
+    使用refresh_token获取access_token
+
+    Args:
+        credentials: 账户凭证信息
+
+    Returns:
+        str: OAuth2访问令牌
+
+    Raises:
+        HTTPException: 令牌获取失败
+    """
+    # 构建OAuth2请求数据
+    token_request_data = {
         'client_id': credentials.client_id,
         'grant_type': 'refresh_token',
         'refresh_token': credentials.refresh_token,
-        'scope': 'https://outlook.office.com/IMAP.AccessAsUser.All offline_access'
+        'scope': OAUTH_SCOPE
     }
-    
+
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(TOKEN_URL, data=data)
+        # 发送令牌请求
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(TOKEN_URL, data=token_request_data)
             response.raise_for_status()
-            
+
+            # 解析响应
             token_data = response.json()
             access_token = token_data.get('access_token')
-            
+
             if not access_token:
-                raise HTTPException(status_code=401, detail="Failed to obtain access token")
-            
+                logger.error(f"No access token in response for {credentials.email}")
+                raise HTTPException(
+                    status_code=401,
+                    detail="Failed to obtain access token from response"
+                )
+
             logger.info(f"Successfully obtained access token for {credentials.email}")
             return access_token
-    
-    except httpx.HTTPError as e:
-        logger.error(f"HTTP error getting access token: {e}")
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP {e.response.status_code} error getting access token for {credentials.email}: {e}")
+        if e.response.status_code == 400:
+            raise HTTPException(status_code=401, detail="Invalid refresh token or client credentials")
+        else:
+            raise HTTPException(status_code=401, detail="Authentication failed")
+    except httpx.RequestError as e:
+        logger.error(f"Request error getting access token for {credentials.email}: {e}")
+        raise HTTPException(status_code=500, detail="Network error during token acquisition")
     except Exception as e:
-        logger.error(f"Error getting access token: {e}")
+        logger.error(f"Unexpected error getting access token for {credentials.email}: {e}")
         raise HTTPException(status_code=500, detail="Token acquisition failed")
 
 
@@ -699,10 +961,31 @@ async def get_email_details(credentials: AccountCredentials, message_id: str) ->
 # FastAPI应用和API端点
 # ============================================================================
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
+    """
+    FastAPI应用生命周期管理
+
+    处理应用启动和关闭时的资源管理
+    """
+    # 应用启动
+    logger.info("Starting Outlook Email Management System...")
+    logger.info(f"IMAP connection pool initialized with max_connections={MAX_CONNECTIONS}")
+
+    yield
+
+    # 应用关闭
+    logger.info("Shutting down Outlook Email Management System...")
+    logger.info("Closing IMAP connection pool...")
+    imap_pool.close_all_connections()
+    logger.info("Application shutdown complete.")
+
+
 app = FastAPI(
     title="Outlook邮件API服务",
-    description="基于FastAPI和aioimaplib的异步邮件管理服务",
-    version="1.0.0"
+    description="基于FastAPI和IMAP协议的高性能邮件管理系统",
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 app.add_middleware(
@@ -712,13 +995,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# 应用关闭时清理连接池
-@app.on_event("shutdown")
-async def shutdown_event():
-    """应用关闭时清理IMAP连接池"""
-    logger.info("Shutting down IMAP connection pool...")
-    imap_pool.close_all_connections()
 
 # 挂载静态文件服务
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -836,4 +1112,19 @@ async def api_status():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+
+    # 启动配置
+    HOST = "0.0.0.0"
+    PORT = 8001
+
+    logger.info(f"Starting Outlook Email Management System on {HOST}:{PORT}")
+    logger.info("Access the web interface at: http://localhost:8001")
+    logger.info("Access the API documentation at: http://localhost:8001/docs")
+
+    uvicorn.run(
+        app,
+        host=HOST,
+        port=PORT,
+        log_level="info",
+        access_log=True
+    )
