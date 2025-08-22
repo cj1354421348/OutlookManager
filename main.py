@@ -31,7 +31,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 
 
@@ -75,13 +75,15 @@ class AccountCredentials(BaseModel):
     email: EmailStr
     refresh_token: str
     client_id: str
+    tags: Optional[List[str]] = Field(default=[])
 
     class Config:
         schema_extra = {
             "example": {
                 "email": "user@outlook.com",
                 "refresh_token": "0.AXoA...",
-                "client_id": "your-client-id"
+                "client_id": "your-client-id",
+                "tags": ["工作", "个人"]
             }
         }
 
@@ -153,13 +155,20 @@ class AccountInfo(BaseModel):
     email_id: str
     client_id: str
     status: str = "active"
+    tags: List[str] = []
 
 
 class AccountListResponse(BaseModel):
     """账户列表响应模型"""
     total_accounts: int
+    page: int
+    page_size: int
+    total_pages: int
     accounts: List[AccountInfo]
 
+class UpdateTagsRequest(BaseModel):
+    """更新标签请求模型"""
+    tags: List[str]
 
 # ============================================================================
 # IMAP连接池管理
@@ -211,7 +220,7 @@ class IMAPConnectionPool:
             imap_client.sock.settimeout(CONNECTION_TIMEOUT)
 
             # XOAUTH2认证
-            auth_string = f"user={email}\1auth=Bearer {access_token}\1\1".encode('utf-8')
+            auth_string = f"user={email}\x01auth=Bearer {access_token}\x01\x01".encode('utf-8')
             imap_client.authenticate('XOAUTH2', lambda _: auth_string)
 
             logger.info(f"Successfully created IMAP connection for {email}")
@@ -593,7 +602,8 @@ async def save_account_credentials(email_id: str, credentials: AccountCredential
 
         accounts[email_id] = {
             'refresh_token': credentials.refresh_token,
-            'client_id': credentials.client_id
+            'client_id': credentials.client_id,
+            'tags': credentials.tags if hasattr(credentials, 'tags') else []
         }
 
         with open(ACCOUNTS_FILE, 'w', encoding='utf-8') as f:
@@ -605,16 +615,27 @@ async def save_account_credentials(email_id: str, credentials: AccountCredential
         raise HTTPException(status_code=500, detail="Failed to save account")
 
 
-async def get_all_accounts() -> AccountListResponse:
-    """获取所有已加载的邮箱账户列表"""
+async def get_all_accounts(
+    page: int = 1, 
+    page_size: int = 10, 
+    email_search: Optional[str] = None,
+    tag_search: Optional[str] = None
+) -> AccountListResponse:
+    """获取所有已加载的邮箱账户列表，支持分页和搜索"""
     try:
         if not Path(ACCOUNTS_FILE).exists():
-            return AccountListResponse(total_accounts=0, accounts=[])
+            return AccountListResponse(
+                total_accounts=0, 
+                page=page, 
+                page_size=page_size, 
+                total_pages=0, 
+                accounts=[]
+            )
 
         with open(ACCOUNTS_FILE, 'r', encoding='utf-8') as f:
             accounts_data = json.load(f)
 
-        accounts = []
+        all_accounts = []
         for email_id, account_info in accounts_data.items():
             # 验证账户状态（可选：检查token是否有效）
             status = "active"
@@ -625,15 +646,48 @@ async def get_all_accounts() -> AccountListResponse:
             except Exception:
                 status = "error"
 
-            accounts.append(AccountInfo(
+            account = AccountInfo(
                 email_id=email_id,
                 client_id=account_info.get('client_id', ''),
-                status=status
-            ))
+                status=status,
+                tags=account_info.get('tags', [])
+            )
+            all_accounts.append(account)
+
+        # 应用搜索过滤
+        filtered_accounts = all_accounts
+        
+        # 邮箱账号模糊搜索
+        if email_search:
+            email_search_lower = email_search.lower()
+            filtered_accounts = [
+                acc for acc in filtered_accounts 
+                if email_search_lower in acc.email_id.lower()
+            ]
+        
+        # 标签模糊搜索
+        if tag_search:
+            tag_search_lower = tag_search.lower()
+            filtered_accounts = [
+                acc for acc in filtered_accounts 
+                if any(tag_search_lower in tag.lower() for tag in acc.tags)
+            ]
+
+        # 计算分页信息
+        total_accounts = len(filtered_accounts)
+        total_pages = (total_accounts + page_size - 1) // page_size if total_accounts > 0 else 0
+        
+        # 应用分页
+        start_index = (page - 1) * page_size
+        end_index = start_index + page_size
+        paginated_accounts = filtered_accounts[start_index:end_index]
 
         return AccountListResponse(
-            total_accounts=len(accounts),
-            accounts=accounts
+            total_accounts=total_accounts,
+            page=page,
+            page_size=page_size,
+            total_pages=total_pages,
+            accounts=paginated_accounts
         )
 
     except json.JSONDecodeError:
@@ -1000,9 +1054,14 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/accounts", response_model=AccountListResponse)
-async def get_accounts():
-    """获取所有已加载的邮箱账户列表"""
-    return await get_all_accounts()
+async def get_accounts(
+    page: int = Query(1, ge=1, description="页码，从1开始"),
+    page_size: int = Query(10, ge=1, le=100, description="每页数量，范围1-100"),
+    email_search: Optional[str] = Query(None, description="邮箱账号模糊搜索"),
+    tag_search: Optional[str] = Query(None, description="标签模糊搜索")
+):
+    """获取所有已加载的邮箱账户列表，支持分页和搜索"""
+    return await get_all_accounts(page, page_size, email_search, tag_search)
 
 
 @app.post("/accounts", response_model=AccountResponse)
@@ -1064,12 +1123,68 @@ async def get_dual_view_emails(
     )
 
 
+@app.put("/accounts/{email_id}/tags", response_model=AccountResponse)
+async def update_account_tags(email_id: str, request: UpdateTagsRequest):
+    """更新账户标签"""
+    try:
+        # 检查账户是否存在
+        credentials = await get_account_credentials(email_id)
+        
+        # 更新标签
+        credentials.tags = request.tags
+        
+        # 保存更新后的凭证
+        await save_account_credentials(email_id, credentials)
+        
+        return AccountResponse(
+            email_id=email_id,
+            message="Account tags updated successfully."
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating account tags: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update account tags")
+
 @app.get("/emails/{email_id}/{message_id}", response_model=EmailDetailsResponse)
 async def get_email_detail(email_id: str, message_id: str):
     """获取邮件详细内容"""
     credentials = await get_account_credentials(email_id)
     return await get_email_details(credentials, message_id)
 
+@app.delete("/accounts/{email_id}", response_model=AccountResponse)
+async def delete_account(email_id: str):
+    """删除邮箱账户"""
+    try:
+        # 检查账户是否存在
+        await get_account_credentials(email_id)
+        
+        # 读取现有账户
+        accounts = {}
+        if Path(ACCOUNTS_FILE).exists():
+            with open(ACCOUNTS_FILE, 'r', encoding='utf-8') as f:
+                accounts = json.load(f)
+        
+        # 删除指定账户
+        if email_id in accounts:
+            del accounts[email_id]
+            
+            # 保存更新后的账户列表
+            with open(ACCOUNTS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(accounts, f, indent=2, ensure_ascii=False)
+            
+            return AccountResponse(
+                email_id=email_id,
+                message="Account deleted successfully."
+            )
+        else:
+            raise HTTPException(status_code=404, detail="Account not found")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting account: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete account")
 
 @app.get("/")
 async def root():
