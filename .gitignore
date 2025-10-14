@@ -4,3 +4,4 @@ accounts.json
 .DS_Store
 .serena
 .idea
+/security.json

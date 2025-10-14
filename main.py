@@ -10,26 +10,31 @@ Version: 1.0.0
 
 import asyncio
 import email
+import hashlib
+import hmac
 import imaplib
 import json
 import logging
+import os
 import re
+import secrets
 import socket
 import threading
 import time
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime
 from itertools import groupby
 from pathlib import Path
 from queue import Empty, Queue
-from typing import AsyncGenerator, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
 
@@ -67,6 +72,143 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
+# 认证与安全配置
+# ============================================================================
+
+SECURITY_FILE = "security.json"
+SESSION_COOKIE_NAME = "outlook_manager_session"
+SESSION_COOKIE_SECURE = os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true"
+SESSION_COOKIE_SAMESITE = "lax"
+APP_USERNAME = os.getenv("APP_USERNAME", "admin")
+APP_PASSWORD = os.getenv("APP_PASSWORD", "admin")
+LOCK_THRESHOLD = 5
+LOCK_DURATION_SECONDS = 3600
+
+sessions: Dict[str, Dict[str, float]] = {}
+session_lock = threading.Lock()
+failed_login_attempts: Dict[str, Dict[str, float]] = defaultdict(lambda: {"count": 0, "locked_until": 0.0})
+failed_key_attempts: Dict[str, Dict[str, float]] = defaultdict(lambda: {"count": 0, "locked_until": 0.0})
+security_lock = threading.Lock()
+security_state: Dict[str, Optional[str]] = {
+    "api_key_plain": None,
+    "api_key_hash": None,
+    "updated_at": None
+}
+failure_counter_lock = threading.Lock()
+failed_password_total = 0
+failed_api_key_total = 0
+
+
+def _current_time() -> float:
+    return time.time()
+
+
+def _is_ip_locked(ip: str, store: Dict[str, Dict[str, float]]) -> bool:
+    entry = store.get(ip)
+    if not entry:
+        return False
+    locked_until = entry.get("locked_until", 0.0)
+    if locked_until and locked_until > _current_time():
+        return True
+    if locked_until and locked_until <= _current_time():
+        entry["count"] = 0
+        entry["locked_until"] = 0.0
+    return False
+
+
+def _register_failure(ip: str, store: Dict[str, Dict[str, float]]) -> None:
+    entry = store.setdefault(ip, {"count": 0, "locked_until": 0.0})
+    entry["count"] += 1
+    if entry["count"] >= LOCK_THRESHOLD:
+        entry["locked_until"] = _current_time() + LOCK_DURATION_SECONDS
+        logger.warning("IP %s locked for %s seconds", ip, LOCK_DURATION_SECONDS)
+
+
+def _reset_failures(ip: str, store: Dict[str, Dict[str, float]]) -> None:
+    if ip in store:
+        store[ip]["count"] = 0
+        store[ip]["locked_until"] = 0.0
+
+
+def _increment_failed_password() -> None:
+    global failed_password_total
+    with failure_counter_lock:
+        failed_password_total += 1
+
+
+def _increment_failed_api_key() -> None:
+    global failed_api_key_total
+    with failure_counter_lock:
+        failed_api_key_total += 1
+
+
+def _hash_api_key(api_key: str) -> str:
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+
+
+def _load_security_state() -> None:
+    path = Path(SECURITY_FILE)
+    if not path.exists():
+        return
+    try:
+        with security_lock:
+            with path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            security_state.update({
+                "api_key_plain": data.get("api_key_plain"),
+                "api_key_hash": data.get("api_key_hash"),
+                "updated_at": data.get("updated_at")
+            })
+    except Exception as exc:
+        logger.error("Failed to load security configuration: %s", exc)
+
+
+def _persist_security_state() -> None:
+    path = Path(SECURITY_FILE)
+    try:
+        with security_lock:
+            with path.open("w", encoding="utf-8") as f:
+                json.dump(security_state, f, indent=2, ensure_ascii=False)
+    except Exception as exc:
+        logger.error("Failed to persist security configuration: %s", exc)
+
+
+def _create_session() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def _store_session(session_id: str, username: str) -> None:
+    with session_lock:
+        sessions[session_id] = {
+            "username": username,
+            "created_at": _current_time(),
+            "last_active": _current_time()
+        }
+
+
+def _get_session(session_id: str) -> Optional[Dict[str, float]]:
+    with session_lock:
+        session = sessions.get(session_id)
+        if session:
+            session["last_active"] = _current_time()
+        return session
+
+
+def _remove_session(session_id: str) -> None:
+    with session_lock:
+        if session_id in sessions:
+            del sessions[session_id]
+
+
+def _get_client_ip(request: Request) -> str:
+    client = request.client
+    return client.host if client else "unknown"
+
+
+_load_security_state()
+
+
+# ============================================================================
 # 数据模型 (Pydantic Models)
 # ============================================================================
 
@@ -78,7 +220,7 @@ class AccountCredentials(BaseModel):
     tags: Optional[List[str]] = Field(default=[])
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "email": "user@outlook.com",
                 "refresh_token": "0.AXoA...",
@@ -100,7 +242,7 @@ class EmailItem(BaseModel):
     sender_initial: str = "?"
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "message_id": "INBOX-123",
                 "folder": "INBOX",
@@ -169,6 +311,89 @@ class AccountListResponse(BaseModel):
 class UpdateTagsRequest(BaseModel):
     """更新标签请求模型"""
     tags: List[str]
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class ApiKeyRequest(BaseModel):
+    api_key: Optional[str] = None
+
+
+# ============================================================================
+# 认证与授权依赖
+# ============================================================================
+
+
+async def require_session(request: Request) -> Dict[str, float]:
+    session_id = request.cookies.get(SESSION_COOKIE_NAME)
+    if not session_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="未登录")
+    session = _get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="会话无效")
+    request.state.session = session
+    return session
+
+
+async def require_api_key(request: Request) -> None:
+    ip = _get_client_ip(request)
+    if _is_ip_locked(ip, failed_key_attempts):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="API Key 已被临时锁定")
+
+    header = request.headers.get("Authorization")
+    with security_lock:
+        stored_hash = security_state.get("api_key_hash")
+
+    if not stored_hash:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="API Key 未配置")
+
+    if not header or not header.startswith("Key "):
+        _register_failure(ip, failed_key_attempts)
+        _increment_failed_api_key()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="缺少 API Key")
+
+    provided_key = header[4:].strip()
+    if not provided_key:
+        _register_failure(ip, failed_key_attempts)
+        _increment_failed_api_key()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="无效的 API Key")
+
+    provided_hash = _hash_api_key(provided_key)
+    if not hmac.compare_digest(provided_hash, stored_hash):
+        _register_failure(ip, failed_key_attempts)
+        _increment_failed_api_key()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="API Key 不正确")
+
+    _reset_failures(ip, failed_key_attempts)
+
+
+async def require_authenticated_request(
+    request: Request,
+    session: Dict[str, float] = Depends(require_session)
+) -> Dict[str, float]:
+    await require_api_key(request)
+    return session
+
+
+def _get_security_stats() -> Dict[str, Any]:
+    with failure_counter_lock:
+        password_failures = failed_password_total
+        api_key_failures = failed_api_key_total
+
+    locked_login_ips = [ip for ip, entry in failed_login_attempts.items() if _is_ip_locked(ip, failed_login_attempts)]
+    locked_api_key_ips = [ip for ip, entry in failed_key_attempts.items() if _is_ip_locked(ip, failed_key_attempts)]
+
+    return {
+        "failed_password_attempts": password_failures,
+        "failed_api_key_attempts": api_key_failures,
+        "locked_login_ips": locked_login_ips,
+        "locked_api_key_ips": locked_api_key_ips
+    }
+
+
 
 # ============================================================================
 # IMAP连接池管理
@@ -1053,19 +1278,110 @@ app.add_middleware(
 # 挂载静态文件服务
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+
+# ============================================================================
+# 认证相关端点
+# ============================================================================
+
+
+@app.post("/auth/login")
+async def login(request: Request, payload: LoginRequest) -> JSONResponse:
+    ip = _get_client_ip(request)
+
+    if _is_ip_locked(ip, failed_login_attempts):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="登录已被临时锁定")
+
+    if payload.username != APP_USERNAME or payload.password != APP_PASSWORD:
+        _register_failure(ip, failed_login_attempts)
+        _increment_failed_password()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
+
+    _reset_failures(ip, failed_login_attempts)
+
+    session_id = _create_session()
+    _store_session(session_id, payload.username)
+
+    resp = JSONResponse({"message": "登录成功"})
+    resp.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=session_id,
+        httponly=True,
+        secure=SESSION_COOKIE_SECURE,
+        samesite=SESSION_COOKIE_SAMESITE,
+        path="/"
+    )
+    return resp
+
+
+@app.post("/auth/logout")
+async def logout(request: Request, session: Dict[str, float] = Depends(require_session)) -> JSONResponse:
+    session_id = request.cookies.get(SESSION_COOKIE_NAME)
+    if session_id:
+        _remove_session(session_id)
+
+    resp = JSONResponse({"message": "已退出"})
+    resp.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    return resp
+
+
+@app.get("/auth/session")
+async def get_session_info(session: Dict[str, float] = Depends(require_session)) -> Dict[str, str]:
+    return {"username": session.get("username", "")}
+
+
+@app.get("/auth/security-stats")
+async def security_stats(session: Dict[str, float] = Depends(require_session)) -> Dict[str, Any]:
+    return _get_security_stats()
+
+
+@app.get("/auth/api-key")
+async def get_api_key(session: Dict[str, float] = Depends(require_session)) -> Dict[str, Optional[str]]:
+    with security_lock:
+        key_plain = security_state.get("api_key_plain")
+    return {"api_key": key_plain}
+
+
+@app.post("/auth/api-key")
+async def set_api_key(
+    payload: ApiKeyRequest = Body(default_factory=ApiKeyRequest),
+    session: Dict[str, float] = Depends(require_session)
+) -> Dict[str, str]:
+    new_key = payload.api_key or secrets.token_urlsafe(32)
+    hashed = _hash_api_key(new_key)
+    with security_lock:
+        security_state["api_key_plain"] = new_key
+        security_state["api_key_hash"] = hashed
+        security_state["updated_at"] = datetime.utcnow().isoformat()
+    _persist_security_state()
+    return {"api_key": new_key}
+
+
+@app.delete("/auth/api-key")
+async def delete_api_key(session: Dict[str, float] = Depends(require_session)) -> Dict[str, Optional[str]]:
+    with security_lock:
+        security_state["api_key_plain"] = None
+        security_state["api_key_hash"] = None
+        security_state["updated_at"] = None
+    _persist_security_state()
+    return {"api_key": None}
+
 @app.get("/accounts", response_model=AccountListResponse)
 async def get_accounts(
     page: int = Query(1, ge=1, description="页码，从1开始"),
     page_size: int = Query(10, ge=1, le=100, description="每页数量，范围1-100"),
     email_search: Optional[str] = Query(None, description="邮箱账号模糊搜索"),
-    tag_search: Optional[str] = Query(None, description="标签模糊搜索")
+    tag_search: Optional[str] = Query(None, description="标签模糊搜索"),
+    _: None = Depends(require_api_key)
 ):
     """获取所有已加载的邮箱账户列表，支持分页和搜索"""
     return await get_all_accounts(page, page_size, email_search, tag_search)
 
 
 @app.post("/accounts", response_model=AccountResponse)
-async def register_account(credentials: AccountCredentials):
+async def register_account(
+    credentials: AccountCredentials,
+    _: None = Depends(require_api_key)
+):
     """注册或更新邮箱账户"""
     try:
         # 验证凭证有效性
@@ -1092,11 +1408,11 @@ async def get_emails(
     folder: str = Query("all", regex="^(inbox|junk|all)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=500),
-    refresh: bool = Query(False, description="强制刷新缓存")
+    refresh: bool = Query(False, description="强制刷新缓存"),
+    _: None = Depends(require_api_key)
 ):
     """获取邮件列表"""
     credentials = await get_account_credentials(email_id)
-    print('credentials:' + str(credentials))
     return await list_emails(credentials, folder, page, page_size, refresh)
 
 
@@ -1105,7 +1421,8 @@ async def get_dual_view_emails(
     email_id: str,
     inbox_page: int = Query(1, ge=1),
     junk_page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100)
+    page_size: int = Query(20, ge=1, le=100),
+    _: None = Depends(require_api_key)
 ):
     """获取双栏视图邮件（收件箱和垃圾箱）"""
     credentials = await get_account_credentials(email_id)
@@ -1124,7 +1441,11 @@ async def get_dual_view_emails(
 
 
 @app.put("/accounts/{email_id}/tags", response_model=AccountResponse)
-async def update_account_tags(email_id: str, request: UpdateTagsRequest):
+async def update_account_tags(
+    email_id: str,
+    request: UpdateTagsRequest,
+    _: None = Depends(require_api_key)
+):
     """更新账户标签"""
     try:
         # 检查账户是否存在
@@ -1147,13 +1468,20 @@ async def update_account_tags(email_id: str, request: UpdateTagsRequest):
         raise HTTPException(status_code=500, detail="Failed to update account tags")
 
 @app.get("/emails/{email_id}/{message_id}", response_model=EmailDetailsResponse)
-async def get_email_detail(email_id: str, message_id: str):
+async def get_email_detail(
+    email_id: str,
+    message_id: str,
+    _: None = Depends(require_api_key)
+):
     """获取邮件详细内容"""
     credentials = await get_account_credentials(email_id)
     return await get_email_details(credentials, message_id)
 
 @app.delete("/accounts/{email_id}", response_model=AccountResponse)
-async def delete_account(email_id: str):
+async def delete_account(
+    email_id: str,
+    _: None = Depends(require_api_key)
+):
     """删除邮箱账户"""
     try:
         # 检查账户是否存在
@@ -1187,24 +1515,42 @@ async def delete_account(email_id: str):
         raise HTTPException(status_code=500, detail="Failed to delete account")
 
 @app.get("/")
-async def root():
+async def root(request: Request):
     """根路径 - 返回前端页面"""
+    session_id = request.cookies.get(SESSION_COOKIE_NAME)
+    if not session_id or not _get_session(session_id):
+        return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     return FileResponse("static/index.html")
 
+
+@app.get("/login")
+async def login_page(request: Request):
+    session_id = request.cookies.get(SESSION_COOKIE_NAME)
+    if session_id and _get_session(session_id):
+        return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+    return FileResponse("static/login.html")
+
 @app.delete("/cache/{email_id}")
-async def clear_cache(email_id: str):
+async def clear_cache(
+    email_id: str,
+    _: None = Depends(require_api_key)
+):
     """清除指定邮箱的缓存"""
     clear_email_cache(email_id)
     return {"message": f"Cache cleared for {email_id}"}
 
 @app.delete("/cache")
-async def clear_all_cache():
+async def clear_all_cache(
+    _: None = Depends(require_api_key)
+):
     """清除所有缓存"""
     clear_email_cache()
     return {"message": "All cache cleared"}
 
 @app.get("/api")
-async def api_status():
+async def api_status(
+    _: None = Depends(require_api_key)
+):
     """API状态检查"""
     return {
         "message": "Outlook邮件API服务正在运行",

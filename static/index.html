@@ -1332,6 +1332,10 @@
                     <span class="icon">📖</span>
                     API管理
                 </button>
+                <button class="nav-item" onclick="showPage('settings', this)">
+                    <span class="icon">⚙️</span>
+                    安全设置
+                </button>
                 <button class="nav-item" onclick="showPage('emails', this)" oncontextmenu="showEmailsContextMenu(event)" id="emailsNav" style="display: none;">
                     <span class="icon">📧</span>
                     邮件列表
@@ -1613,7 +1617,7 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                                     </div>
                                     <div class="api-section">
                                         <h4>认证方式</h4>
-                                        <p class="api-description">当前版本无需认证，直接调用接口即可。</p>
+                                        <p class="api-description">登录后使用服务器返回的会话 Cookie，并在请求头中附加 <code>Authorization: Key &lt;API_KEY&gt;</code>。</p>
                                     </div>
                                     <div class="api-section">
                                         <h4>响应格式</h4>
@@ -1825,6 +1829,76 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                     </div>
                 </div>
 
+                <!-- 安全设置页面 -->
+                <div id="settingsPage" class="page hidden">
+                    <div class="card" style="max-width: 720px;">
+                        <div class="flex items-center justify-between mb-6">
+                            <div>
+                                <h3 class="font-semibold">安全设置</h3>
+                                <p class="text-sm" style="color: #64748b;">管理登录会话与 API Key</p>
+                            </div>
+                            <button class="btn btn-secondary btn-sm" onclick="refreshSecurityInfo()">
+                                <span>🔄</span>
+                                刷新状态
+                            </button>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">当前 API Key</label>
+                            <div style="display: flex; align-items: center; gap: 12px;">
+                                <input id="apiKeyDisplay" class="form-input" type="text" readonly value="未设置" style="flex: 1;">
+                                <button id="copyApiKeyBtn" class="btn btn-secondary btn-sm" onclick="copyApiKey()" disabled>
+                                    <span>📋</span>
+                                    复制
+                                </button>
+                            </div>
+                            <div class="flex gap-2" style="margin-top: 12px;">
+                                <button class="btn btn-primary" onclick="generateApiKey()">
+                                    <span>🔐</span>
+                                    生成随机 Key
+                                </button>
+                                <button class="btn btn-danger" onclick="deleteApiKey()">
+                                    <span>🗑️</span>
+                                    删除 Key
+                                </button>
+                            </div>
+                            <p class="text-sm" style="color: #64748b; margin-top: 8px;">
+                                登录后须先设置 Key 才能调用业务接口。删除后需重新设置。
+                            </p>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">自定义 Key</label>
+                            <input id="customApiKeyInput" class="form-input" type="text" placeholder="输入自定义 Key（建议至少32位随机字符）">
+                            <button class="btn btn-secondary" style="margin-top: 12px;" onclick="saveCustomApiKey()">
+                                <span>💾</span>
+                                保存自定义 Key
+                            </button>
+                        </div>
+
+                        <div class="card" style="background: #f8fafc; border-color: #e2e8f0; margin-top: 24px;">
+                            <h4 style="margin-bottom: 12px; color: #1e293b;">安全统计</h4>
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
+                                <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;">
+                                    <div style="font-size: 0.75rem; color: #64748b;">密码错误次数</div>
+                                    <div style="font-size: 1.5rem; font-weight: 600; color: #1e293b; margin-top: 8px;" id="passwordFailCount">0</div>
+                                </div>
+                                <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;">
+                                    <div style="font-size: 0.75rem; color: #64748b;">API Key 错误次数</div>
+                                    <div style="font-size: 1.5rem; font-weight: 600; color: #1e293b; margin-top: 8px;" id="apiKeyFailCount">0</div>
+                                </div>
+                            </div>
+                            <div style="margin-top: 16px;">
+                                <h5 style="font-size: 0.875rem; color: #475569; margin-bottom: 8px;">被锁定的 IP</h5>
+                                <div style="font-size: 0.8125rem; color: #64748b;">
+                                    <p>登录锁定：<span id="loginLockedIps">无</span></p>
+                                    <p>API Key 锁定：<span id="keyLockedIps">无</span></p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- 邮件列表页面 -->
                 <div id="emailsPage" class="page hidden">
                     <div class="card">
@@ -2016,6 +2090,13 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
         let currentEmailFolder = 'all';
         let currentEmailPage = 1;
         let accounts = [];
+        let currentApiKey = null;
+        let securityStats = {
+            failed_password_attempts: 0,
+            failed_api_key_attempts: 0,
+            locked_login_ips: [],
+            locked_api_key_ips: []
+        };
         
         // 账户管理分页相关变量
         let accountsCurrentPage = 1;
@@ -2031,6 +2112,15 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
 
         // 页面管理
         function showPage(pageName, targetElement = null) {
+            const protectedPages = ['accounts', 'addAccount', 'batchAdd', 'emails'];
+            if (protectedPages.includes(pageName) && !currentApiKey) {
+                showNotification('请先在安全设置中生成 API Key', 'warning');
+                if (pageName !== 'settings') {
+                    showPage('settings');
+                }
+                return;
+            }
+
             // 隐藏所有页面
             document.querySelectorAll('.page').forEach(page => page.classList.add('hidden'));
 
@@ -2059,7 +2149,8 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                 'addAccount': '添加邮箱账户',
                 'batchAdd': '批量添加账户',
                 'apiDocs': 'API接口文档',
-                'emails': '邮件列表'
+                'emails': '邮件列表',
+                'settings': '安全设置'
             };
             document.getElementById('pageTitle').textContent = titles[pageName] || '';
 
@@ -2075,6 +2166,8 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                 initApiDocs();
             } else if (pageName === 'emails') {
                 loadEmails();
+            } else if (pageName === 'settings') {
+                refreshSecurityInfo().catch(() => {});
             }
         }
 
@@ -2179,24 +2272,200 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
 
         // API请求
         async function apiRequest(url, options = {}) {
-            try {
-                const response = await fetch(API_BASE + url, {
-                    headers: {
-                        'Content-Type': 'application/json',
-                        ...options.headers
-                    },
-                    ...options
-                });
+            const { skipApiKey = false, useSession = false, ...fetchOptions } = options;
+            const headers = {
+                'Content-Type': 'application/json',
+                ...(fetchOptions.headers || {})
+            };
 
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            if (!skipApiKey && currentApiKey) {
+                headers['Authorization'] = `Key ${currentApiKey}`;
+            }
+
+            try {
+                const requestOptions = {
+                    ...fetchOptions,
+                    headers
+                };
+
+                if (!('credentials' in fetchOptions)) {
+                    requestOptions.credentials = useSession ? 'include' : 'omit';
                 }
 
-                return await response.json();
+                const response = await fetch(API_BASE + url, requestOptions);
+
+                const responseText = await response.text();
+                let data = null;
+                if (responseText) {
+                    try {
+                        data = JSON.parse(responseText);
+                    } catch (parseError) {
+                        data = null;
+                    }
+                }
+
+                if (response.status === 401) {
+                    window.location.href = '/login';
+                    throw new Error('未登录');
+                }
+
+                if (response.status === 403) {
+                    const detail = data && data.detail ? data.detail : '禁止访问';
+                    throw new Error(detail);
+                }
+
+                if (!response.ok) {
+                    const message = data && data.detail ? data.detail : `HTTP ${response.status}`;
+                    throw new Error(message);
+                }
+
+                return data ?? {};
             } catch (error) {
                 console.error('API请求失败:', error);
                 throw error;
             }
+        }
+
+        async function checkSession() {
+            await apiRequest('/auth/session', { skipApiKey: true, useSession: true });
+        }
+
+        async function loadApiKey() {
+            try {
+                const data = await apiRequest('/auth/api-key', { skipApiKey: true, useSession: true });
+                currentApiKey = data && data.api_key ? data.api_key : null;
+                updateApiKeyDisplay();
+            } catch (error) {
+                currentApiKey = null;
+                updateApiKeyDisplay();
+                showNotification(error.message || '获取 API Key 失败', 'error');
+            }
+        }
+
+        function updateApiKeyDisplay() {
+            const displayInput = document.getElementById('apiKeyDisplay');
+            const copyButton = document.getElementById('copyApiKeyBtn');
+            if (!displayInput || !copyButton) return;
+
+            if (currentApiKey) {
+                displayInput.value = currentApiKey;
+                copyButton.disabled = false;
+            } else {
+                displayInput.value = '未设置';
+                copyButton.disabled = true;
+            }
+        }
+
+        async function generateApiKey() {
+            try {
+                const data = await apiRequest('/auth/api-key', {
+                    method: 'POST',
+                    body: JSON.stringify({}),
+                    skipApiKey: true,
+                    useSession: true
+                });
+                currentApiKey = data.api_key;
+                updateApiKeyDisplay();
+                await loadSecurityStats();
+                showNotification('已生成新的 API Key', 'success');
+            } catch (error) {
+                showNotification('生成 API Key 失败: ' + error.message, 'error');
+            }
+        }
+
+        async function saveCustomApiKey() {
+            const input = document.getElementById('customApiKeyInput');
+            const value = input ? input.value.trim() : '';
+
+            if (!value) {
+                showNotification('请输入自定义 Key', 'warning');
+                return;
+            }
+
+            try {
+                const data = await apiRequest('/auth/api-key', {
+                    method: 'POST',
+                    body: JSON.stringify({ api_key: value }),
+                    skipApiKey: true,
+                    useSession: true
+                });
+                currentApiKey = data.api_key;
+                updateApiKeyDisplay();
+                await loadSecurityStats();
+                showNotification('自定义 API Key 已保存', 'success');
+            } catch (error) {
+                showNotification('保存 API Key 失败: ' + error.message, 'error');
+            }
+        }
+
+        async function deleteApiKey() {
+            if (!confirm('确定要删除当前 API Key 吗？删除后必须重新设置才可调用接口。')) {
+                return;
+            }
+
+            try {
+                await apiRequest('/auth/api-key', {
+                    method: 'DELETE',
+                    skipApiKey: true,
+                    useSession: true
+                });
+                currentApiKey = null;
+                updateApiKeyDisplay();
+                await loadSecurityStats();
+                showNotification('API Key 已删除', 'success');
+                showPage('settings');
+            } catch (error) {
+                showNotification('删除 API Key 失败: ' + error.message, 'error');
+            }
+        }
+
+        function copyApiKey() {
+            if (!currentApiKey) {
+                showNotification('尚未设置 API Key', 'warning');
+                return;
+            }
+
+            navigator.clipboard.writeText(currentApiKey).then(() => {
+                showNotification('API Key 已复制到剪贴板', 'success');
+            }).catch(() => {
+                showNotification('复制失败，请手动复制', 'error');
+            });
+        }
+
+        async function loadSecurityStats() {
+            try {
+                const data = await apiRequest('/auth/security-stats', { skipApiKey: true, useSession: true });
+                securityStats = data || securityStats;
+                updateSecurityStatsDisplay();
+            } catch (error) {
+                showNotification('获取安全统计失败: ' + error.message, 'error');
+            }
+        }
+
+        function updateSecurityStatsDisplay() {
+            const passwordFail = document.getElementById('passwordFailCount');
+            const apiKeyFail = document.getElementById('apiKeyFailCount');
+            const loginLocked = document.getElementById('loginLockedIps');
+            const keyLocked = document.getElementById('keyLockedIps');
+
+            if (passwordFail) {
+                passwordFail.textContent = securityStats.failed_password_attempts || 0;
+            }
+            if (apiKeyFail) {
+                apiKeyFail.textContent = securityStats.failed_api_key_attempts || 0;
+            }
+            if (loginLocked) {
+                const list = securityStats.locked_login_ips || [];
+                loginLocked.textContent = list.length ? list.join(', ') : '无';
+            }
+            if (keyLocked) {
+                const list = securityStats.locked_api_key_ips || [];
+                keyLocked.textContent = list.length ? list.join(', ') : '无';
+            }
+        }
+
+        async function refreshSecurityInfo() {
+            await Promise.all([loadApiKey(), loadSecurityStats()]);
         }
 
         // 表单管理函数
@@ -2638,7 +2907,7 @@ example3@outlook.com----password3----refresh_token_here_3----client_id_here_3`;
 ## 基础信息
 
 - **Base URL**: ${baseUrl}
-- **认证方式**: 无需认证
+- **认证方式**: 登录后使用会话 Cookie + Authorization: Key <API_KEY>
 - **响应格式**: JSON
 
 ## 接口列表
@@ -2720,73 +2989,52 @@ GET /emails/{email_id}/{message_id}
         }
 
         async function tryApi(apiType) {
-            const baseUrl = window.location.origin;
-            let url, responseElementId;
-
-            switch (apiType) {
-                case 'accounts':
-                    url = `${baseUrl}/accounts`;
-                    responseElementId = 'accountsResponse';
-                    break;
-                case 'emails':
-                    // 需要先获取一个邮箱账户
-                    try {
-                        const accountsData = await apiRequest('/accounts');
-                        if (accountsData.accounts && accountsData.accounts.length > 0) {
-                            const emailId = encodeURIComponent(accountsData.accounts[0].email_id);
-                            url = `${baseUrl}/emails/${emailId}?folder=inbox&page=1&page_size=5`;
-                            responseElementId = 'emailsResponse';
-                        } else {
-                            showNotification('没有可用的邮箱账户，请先添加账户', 'warning');
-                            return;
-                        }
-                    } catch (error) {
-                        showNotification('获取邮箱账户失败: ' + error.message, 'error');
-                        return;
-                    }
-                    break;
-                case 'emailDetail':
-                    // 需要先获取一个邮件ID
-                    try {
-                        const accountsData = await apiRequest('/accounts');
-                        if (accountsData.accounts && accountsData.accounts.length > 0) {
-                            const emailId = encodeURIComponent(accountsData.accounts[0].email_id);
-                            const emailsData = await apiRequest(`/emails/${emailId}?folder=all&page=1&page_size=1`);
-                            if (emailsData.emails && emailsData.emails.length > 0) {
-                                const messageId = emailsData.emails[0].message_id;
-                                url = `${baseUrl}/emails/${emailId}/${messageId}`;
-                                responseElementId = 'emailDetailResponse';
-                            } else {
-                                showNotification('该邮箱没有邮件', 'warning');
-                                return;
-                            }
-                        } else {
-                            showNotification('没有可用的邮箱账户，请先添加账户', 'warning');
-                            return;
-                        }
-                    } catch (error) {
-                        showNotification('获取邮件数据失败: ' + error.message, 'error');
-                        return;
-                    }
-                    break;
-                default:
-                    return;
-            }
+            let path = '';
+            let responseElementId = '';
+            let data = null;
 
             try {
-                showNotification('正在调用API...', 'info', '', 2000);
-                const response = await fetch(url);
-                const data = await response.json();
+                if (apiType === 'accounts') {
+                    path = '/accounts';
+                    responseElementId = 'accountsResponse';
+                    data = await apiRequest(path);
+                } else if (apiType === 'emails') {
+                    const accountsData = await apiRequest('/accounts');
+                    if (!accountsData.accounts || accountsData.accounts.length === 0) {
+                        showNotification('没有可用的邮箱账户，请先添加账户', 'warning');
+                        return;
+                    }
+                    const emailId = encodeURIComponent(accountsData.accounts[0].email_id);
+                    path = `/emails/${emailId}?folder=inbox&page=1&page_size=5`;
+                    responseElementId = 'emailsResponse';
+                    data = await apiRequest(path);
+                } else if (apiType === 'emailDetail') {
+                    const accountsData = await apiRequest('/accounts');
+                    if (!accountsData.accounts || accountsData.accounts.length === 0) {
+                        showNotification('没有可用的邮箱账户，请先添加账户', 'warning');
+                        return;
+                    }
+                    const emailId = encodeURIComponent(accountsData.accounts[0].email_id);
+                    const emailsData = await apiRequest(`/emails/${emailId}?folder=all&page=1&page_size=1`);
+                    if (!emailsData.emails || emailsData.emails.length === 0) {
+                        showNotification('该邮箱没有邮件', 'warning');
+                        return;
+                    }
+                    const messageId = emailsData.emails[0].message_id;
+                    path = `/emails/${emailId}/${messageId}`;
+                    responseElementId = 'emailDetailResponse';
+                    data = await apiRequest(path);
+                } else {
+                    return;
+                }
 
-                // 显示响应结果
                 const responseElement = document.getElementById(responseElementId);
                 const responseDataElement = document.getElementById(responseElementId.replace('Response', 'ResponseData'));
 
                 responseDataElement.textContent = JSON.stringify(data, null, 2);
                 responseElement.classList.add('show');
 
-                showNotification('API调用成功！', 'success');
-
+                showNotification(`API 调用成功：${window.location.origin + path}`, 'success');
             } catch (error) {
                 showNotification('API调用失败: ' + error.message, 'error');
             }
@@ -3515,24 +3763,40 @@ GET /emails/{email_id}/{message_id}
             }
         });
 
-        // 初始化
-        window.addEventListener('load', function() {
-            // 处理URL路由
-            handleUrlRouting();
-            
-            // 如果没有路由匹配，显示默认页面
-            if (!window.location.hash || window.location.hash === '#') {
-                showPage('accounts');
-            }
+        async function initializeApp() {
+            try {
+                await checkSession();
+                await refreshSecurityInfo();
 
-            // 显示欢迎消息
-            setTimeout(() => {
-                showNotification('欢迎使用邮件管理系统！', 'info', '欢迎', 3000);
-            }, 500);
-        });
+                const hasHash = window.location.hash && window.location.hash !== '#';
+
+                if (currentApiKey) {
+                    if (hasHash) {
+                        handleUrlRouting();
+                    } else {
+                        showPage('accounts');
+                    }
+                } else {
+                    showPage('settings');
+                    showNotification('请先在安全设置中生成 API Key', 'warning');
+                }
+
+                setTimeout(() => {
+                    showNotification('欢迎使用邮件管理系统！', 'info', '欢迎', 3000);
+                }, 500);
+            } catch (error) {
+                window.location.href = '/login';
+            }
+        }
+
+        window.addEventListener('load', initializeApp);
         
         // URL路由处理
         function handleUrlRouting() {
+            if (!currentApiKey) {
+                return;
+            }
+
             const hash = window.location.hash;
             
             if (hash.startsWith('#/emails/')) {
@@ -3552,12 +3816,13 @@ GET /emails/{email_id}/{message_id}
         
         // 监听浏览器返回按钮
         window.addEventListener('popstate', function() {
+            if (!currentApiKey) {
+                showPage('settings');
+                return;
+            }
             handleUrlRouting();
         });
 
-    </script>
-</body>
-</html>
     </script>
 </body>
 </html>
