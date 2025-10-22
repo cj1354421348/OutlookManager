@@ -22,9 +22,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制应用代码
+COPY app/ ./app/
 COPY main.py .
 COPY static/ ./static/
 COPY docker-entrypoint.sh .
+COPY accounts.json ./accounts.json
+COPY security.json ./security.json
 
 # 设置启动脚本权限
 RUN chmod +x docker-entrypoint.sh
