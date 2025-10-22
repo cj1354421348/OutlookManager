@@ -9,13 +9,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 ACCOUNTS_FILE = "accounts.json"
 SECURITY_FILE = "security.json"
 
-MONGO_URI = os.getenv("MONGO_URI")
-MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "outlook_manager")
-MONGO_ACCOUNTS_COLLECTION = os.getenv("MONGO_ACCOUNTS_COLLECTION", "accounts")
-ACCOUNTS_SYNC_POLICY = os.getenv("ACCOUNTS_SYNC_POLICY", "local").strip().lower()
-if ACCOUNTS_SYNC_POLICY not in {"local", "remote"}:
-    ACCOUNTS_SYNC_POLICY = "local"
-
 TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
 OAUTH_SCOPE = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
 
