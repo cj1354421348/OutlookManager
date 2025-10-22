@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from datetime import datetime, timezone
 from math import ceil
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -16,13 +17,19 @@ from app.models import (
     AccountResponse,
     UpdateTagsRequest,
 )
+from app.services.account_sync import AccountSyncService
 from app.services.oauth import fetch_access_token
+from app.sync.mongo_sync import SyncStats
 
 
 class AccountRepository:
     def __init__(self, file_path: str) -> None:
         self._path = Path(file_path)
         self._lock = threading.Lock()
+
+    @staticmethod
+    def _current_timestamp() -> str:
+        return datetime.now(timezone.utc).isoformat()
 
     def read_all(self) -> Dict[str, Dict[str, object]]:
         if not self._path.exists():
@@ -39,13 +46,20 @@ class AccountRepository:
 
     def write_all(self, accounts: Dict[str, Dict[str, object]]) -> None:
         with self._lock:
+            payload = {}
+            for email, data in accounts.items():
+                record = dict(data)
+                record.setdefault("updated_at", self._current_timestamp())
+                payload[email] = record
             with self._path.open("w", encoding="utf-8") as fh:
-                json.dump(accounts, fh, indent=2, ensure_ascii=False)
+                json.dump(payload, fh, indent=2, ensure_ascii=False)
 
     def save_account(self, email_id: str, data: Dict[str, object]) -> None:
         with self._lock:
             accounts = self.read_all()
-            accounts[email_id] = data
+            payload = dict(data)
+            payload["updated_at"] = self._current_timestamp()
+            accounts[email_id] = payload
             with self._path.open("w", encoding="utf-8") as fh:
                 json.dump(accounts, fh, indent=2, ensure_ascii=False)
 
@@ -60,8 +74,14 @@ class AccountRepository:
 
 
 class AccountService:
-    def __init__(self, repository: AccountRepository) -> None:
+    def __init__(self, repository: AccountRepository, sync_service: AccountSyncService | None = None) -> None:
         self._repository = repository
+        self._sync_service = sync_service
+
+    def _sync_after_mutation(self) -> None:
+        if self._sync_service is None:
+            return
+        self._sync_service.sync_local_changes()
 
     def get_credentials(self, email_id: str) -> AccountCredentials:
         accounts = self._repository.read_all()
@@ -131,6 +151,7 @@ class AccountService:
         }
         self._repository.save_account(credentials.email, payload)
         logger.info("Account credentials saved for %s", credentials.email)
+        self._sync_after_mutation()
         return AccountResponse(email_id=credentials.email, message="Account verified and saved successfully.")
 
     def update_tags(self, email_id: str, request: UpdateTagsRequest) -> AccountResponse:
@@ -141,11 +162,24 @@ class AccountService:
             "tags": request.tags,
         }
         self._repository.save_account(email_id, updated)
+        self._sync_after_mutation()
         return AccountResponse(email_id=email_id, message="Account tags updated successfully.")
 
     def delete_account(self, email_id: str) -> AccountResponse:
         self._repository.delete_account(email_id)
+        self._sync_after_mutation()
         return AccountResponse(email_id=email_id, message="Account deleted successfully.")
+
+    def sync_to_database(self) -> SyncStats:
+        if self._sync_service is None:
+            return SyncStats()
+        return self._sync_service.sync_to_remote()
+
+    def sync_from_database(self) -> SyncStats:
+        if self._sync_service is None:
+            return SyncStats()
+        _, stats = self._sync_service.sync_from_remote()
+        return stats
 
     @staticmethod
     def _apply_filters(
@@ -162,5 +196,6 @@ class AccountService:
             result = [acc for acc in result if any(tag_term in tag.lower() for tag in acc.tags)]
         return result
 
-
-account_service = AccountService(AccountRepository(ACCOUNTS_FILE))
+account_repository = AccountRepository(ACCOUNTS_FILE)
+account_sync_service = AccountSyncService(account_repository)
+account_service = AccountService(account_repository, account_sync_service)

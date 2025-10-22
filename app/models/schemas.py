@@ -98,6 +98,15 @@ class UpdateTagsRequest(BaseModel):
     tags: List[str]
 
 
+class SyncResponse(BaseModel):
+    message: str
+    inserted: int = 0
+    updated: int = 0
+    deleted: int = 0
+    skipped: int = 0
+    conflicts: List[str] = Field(default_factory=list)
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str

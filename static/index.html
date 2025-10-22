@@ -1368,6 +1368,14 @@
                                     <span>📦</span>
                                     批量添加
                                 </button>
+                                <button class="btn btn-secondary btn-sm" id="syncToDbBtn" onclick="syncAccountsToDatabase()">
+                                    <span>💾</span>
+                                    同步到数据库
+                                </button>
+                                <button class="btn btn-secondary btn-sm" id="syncFromDbBtn" onclick="syncAccountsFromDatabase()">
+                                    <span>📥</span>
+                                    从数据库同步
+                                </button>
                                 <button class="btn btn-secondary btn-sm" onclick="loadAccounts()">
                                     <span>🔄</span>
                                     刷新列表
@@ -3597,6 +3605,59 @@ GET /emails/{email_id}/{message_id}
         function handleSearchKeyPress(event) {
             if (event.key === 'Enter') {
                 searchAccounts();
+            }
+        }
+
+        function formatSyncNotification(prefix, data) {
+            const summary = `新增 ${data.inserted || 0} · 更新 ${data.updated || 0} · 删除 ${data.deleted || 0} · 跳过 ${data.skipped || 0}`;
+            const conflicts = Array.isArray(data.conflicts) && data.conflicts.length > 0
+                ? `，冲突条目：${data.conflicts.join('，')}`
+                : '';
+            return `${prefix}。${summary}${conflicts}`;
+        }
+
+        async function syncAccountsToDatabase() {
+            const btn = document.getElementById('syncToDbBtn');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span>⏳</span> 同步中...';
+            }
+
+            try {
+                const result = await apiRequest('/accounts/sync/to-db', { method: 'POST' });
+                const message = formatSyncNotification(result.message || '同步完成', result);
+                const hasConflicts = Array.isArray(result.conflicts) && result.conflicts.length > 0;
+                showNotification(message, hasConflicts ? 'warning' : 'success');
+            } catch (error) {
+                showNotification('同步到数据库失败: ' + error.message, 'error');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<span>💾</span> 同步到数据库';
+                }
+            }
+        }
+
+        async function syncAccountsFromDatabase() {
+            const btn = document.getElementById('syncFromDbBtn');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span>⏳</span> 同步中...';
+            }
+
+            try {
+                const result = await apiRequest('/accounts/sync/from-db', { method: 'POST' });
+                const message = formatSyncNotification(result.message || '同步完成', result);
+                const hasConflicts = Array.isArray(result.conflicts) && result.conflicts.length > 0;
+                showNotification(message, hasConflicts ? 'warning' : 'success');
+                loadAccounts(accountsCurrentPage);
+            } catch (error) {
+                showNotification('从数据库同步失败: ' + error.message, 'error');
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<span>📥</span> 从数据库同步';
+                }
             }
         }
         

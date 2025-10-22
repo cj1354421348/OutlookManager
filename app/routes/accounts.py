@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 
-from app.models import AccountCredentials, AccountListResponse, AccountResponse, UpdateTagsRequest
+from app.models import AccountCredentials, AccountListResponse, AccountResponse, SyncResponse, UpdateTagsRequest
 from app.services.accounts import account_service
 from app.services.security import require_api_key
 
@@ -43,3 +43,21 @@ async def delete_account(
     _: None = Depends(require_api_key),
 ) -> AccountResponse:
     return account_service.delete_account(email_id)
+
+
+@router.post("/sync/to-db", response_model=SyncResponse)
+async def sync_accounts_to_database(
+    _: None = Depends(require_api_key),
+) -> SyncResponse:
+    stats = account_service.sync_to_database()
+    result = stats.to_dict()
+    return SyncResponse(message="账户数据已同步至数据库", **result)
+
+
+@router.post("/sync/from-db", response_model=SyncResponse)
+async def sync_accounts_from_database(
+    _: None = Depends(require_api_key),
+) -> SyncResponse:
+    stats = account_service.sync_from_database()
+    result = stats.to_dict()
+    return SyncResponse(message="已从数据库同步账户数据", **result)
