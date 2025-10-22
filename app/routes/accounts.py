@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 
-from app.models import AccountCredentials, AccountListResponse, AccountResponse, UpdateTagsRequest
+from app.models import AccountCredentials, AccountListResponse, AccountResponse, SyncResult, UpdateTagsRequest
 from app.services.accounts import account_service
 from app.services.security import require_api_key
 
@@ -43,3 +43,19 @@ async def delete_account(
     _: None = Depends(require_api_key),
 ) -> AccountResponse:
     return account_service.delete_account(email_id)
+
+
+@router.post("/sync/push", response_model=SyncResult)
+async def sync_accounts_to_database(
+    _: None = Depends(require_api_key),
+) -> SyncResult:
+    report = account_service.sync_local_to_remote()
+    return SyncResult(**report.to_dict())
+
+
+@router.post("/sync/pull", response_model=SyncResult)
+async def sync_accounts_from_database(
+    _: None = Depends(require_api_key),
+) -> SyncResult:
+    report = account_service.sync_remote_to_local()
+    return SyncResult(**report.to_dict())

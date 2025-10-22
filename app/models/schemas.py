@@ -98,6 +98,15 @@ class UpdateTagsRequest(BaseModel):
     tags: List[str]
 
 
+class SyncResult(BaseModel):
+    message: str
+    added: int = 0
+    updated: int = 0
+    removed: int = 0
+    skipped: int = 0
+    marked_deleted: int = 0
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str

@@ -9,6 +9,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 ACCOUNTS_FILE = "accounts.json"
 SECURITY_FILE = "security.json"
 
+ACCOUNTS_DB_HOST = os.getenv("ACCOUNTS_DB_HOST")
+ACCOUNTS_DB_PORT = int(os.getenv("ACCOUNTS_DB_PORT", "3306"))
+ACCOUNTS_DB_USER = os.getenv("ACCOUNTS_DB_USER")
+ACCOUNTS_DB_PASSWORD = os.getenv("ACCOUNTS_DB_PASSWORD")
+ACCOUNTS_DB_NAME = os.getenv("ACCOUNTS_DB_NAME")
+ACCOUNTS_DB_TABLE = os.getenv("ACCOUNTS_DB_TABLE", "account_backups")
+ACCOUNTS_SYNC_CONFLICT = os.getenv("ACCOUNTS_SYNC_CONFLICT", "prefer_local").lower()
+
 TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
 OAUTH_SCOPE = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
 

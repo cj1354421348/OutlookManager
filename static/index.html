@@ -1368,6 +1368,14 @@
                                     <span>📦</span>
                                     批量添加
                                 </button>
+                                <button class="btn btn-secondary btn-sm" id="syncToServerBtn" onclick="syncAccountsToServer(this)">
+                                    <span>⬆️</span>
+                                    推送到服务器
+                                </button>
+                                <button class="btn btn-secondary btn-sm" id="syncFromServerBtn" onclick="syncAccountsFromServer(this)">
+                                    <span>⬇️</span>
+                                    拉取到本地
+                                </button>
                                 <button class="btn btn-secondary btn-sm" onclick="loadAccounts()">
                                     <span>🔄</span>
                                     刷新列表
@@ -2629,6 +2637,80 @@ example3@outlook.com----password3----refresh_token_here_3----client_id_here_3`;
 
             } catch (error) {
                 accountsList.innerHTML = '<div class="error">加载失败: ' + error.message + '</div>';
+            }
+        }
+
+        function formatSyncMessage(result, fallbackMessage) {
+            if (result && result.message) {
+                return result.message;
+            }
+            if (!result) {
+                return fallbackMessage;
+            }
+            const parts = [];
+            const mappings = [
+                ['added', '新增'],
+                ['updated', '更新'],
+                ['marked_deleted', '标记删除'],
+                ['removed', '移除'],
+                ['skipped', '跳过'],
+            ];
+            for (const [key, label] of mappings) {
+                const value = Number(result[key] ?? 0);
+                if (!Number.isNaN(value) && value > 0) {
+                    parts.push(`${label}${value}`);
+                }
+            }
+            return parts.length ? `${fallbackMessage}：${parts.join('，')}` : fallbackMessage;
+        }
+
+        function setButtonLoading(button, loadingText) {
+            if (!button) {
+                return;
+            }
+            if (!button.dataset.originalText) {
+                button.dataset.originalText = button.innerHTML;
+            }
+            button.disabled = true;
+            button.innerHTML = `<span>⏳</span> ${loadingText}`;
+        }
+
+        function resetButtonLoading(button) {
+            if (!button) {
+                return;
+            }
+            button.disabled = false;
+            if (button.dataset.originalText) {
+                button.innerHTML = button.dataset.originalText;
+                delete button.dataset.originalText;
+            }
+        }
+
+        async function syncAccountsToServer(button) {
+            const target = button || document.getElementById('syncToServerBtn');
+            setButtonLoading(target, '推送中...');
+            try {
+                const result = await apiRequest('/accounts/sync/push', { method: 'POST' });
+                showNotification(formatSyncMessage(result, '推送完成'), 'success');
+                loadAccounts(accountsCurrentPage);
+            } catch (error) {
+                showNotification('同步到服务器失败: ' + error.message, 'error');
+            } finally {
+                resetButtonLoading(target);
+            }
+        }
+
+        async function syncAccountsFromServer(button) {
+            const target = button || document.getElementById('syncFromServerBtn');
+            setButtonLoading(target, '拉取中...');
+            try {
+                const result = await apiRequest('/accounts/sync/pull', { method: 'POST' });
+                showNotification(formatSyncMessage(result, '拉取完成'), 'success');
+                loadAccounts(accountsCurrentPage);
+            } catch (error) {
+                showNotification('从服务器同步失败: ' + error.message, 'error');
+            } finally {
+                resetButtonLoading(target);
             }
         }
 

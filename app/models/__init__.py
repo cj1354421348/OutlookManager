@@ -9,6 +9,7 @@ from .schemas import (
     EmailItem,
     EmailListResponse,
     LoginRequest,
+    SyncResult,
     UpdateTagsRequest,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "EmailItem",
     "EmailListResponse",
     "LoginRequest",
+    "SyncResult",
     "UpdateTagsRequest",
 ]
