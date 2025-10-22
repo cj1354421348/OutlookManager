@@ -93,9 +93,11 @@ class AccountRepository:
         if not self._synchronizer or not self._synchronizer.is_enabled:
             return
         try:
-            self._synchronizer.sync_file_to_db(accounts, source=source)
+            future = self._synchronizer.enqueue_file_to_db(accounts, source=source)
+            if future is None:
+                logger.debug("账户数据库同步未启用，跳过")
         except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to sync accounts.json to database automatically: %s", exc, exc_info=True)
+            logger.error("Failed to enqueue accounts sync job: %s", exc, exc_info=True)
 
     def _require_synchronizer(self) -> AccountSynchronizer:
         if not self._synchronizer or not self._synchronizer.is_enabled:

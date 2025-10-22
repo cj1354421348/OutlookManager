@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import Dict, Tuple
@@ -13,6 +15,8 @@ from pymysql.cursors import DictCursor
 from app import config
 
 logger = logging.getLogger(__name__)
+
+_sync_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="accounts-sync")
 
 
 @dataclass(slots=True)
@@ -133,6 +137,14 @@ class AccountSynchronizer:
 
         message = f"同步完成：新增 {added}，更新 {updated}，标记删除 {marked_deleted}"
         return SyncReport(message=message, added=added, updated=updated, marked_deleted=marked_deleted)
+
+    def enqueue_file_to_db(self, accounts: Dict[str, Dict[str, object]], *, source: str = "auto") -> Future | None:
+        if not self.is_enabled:
+            return None
+        snapshot = copy.deepcopy(accounts)
+        future = _sync_executor.submit(self.sync_file_to_db, snapshot, source=source)
+        future.add_done_callback(self._log_async_result)
+        return future
 
     def sync_db_to_file(self, local_accounts: Dict[str, Dict[str, object]]) -> Tuple[Dict[str, Dict[str, object]], SyncReport, bool]:
         if not self.is_enabled:
@@ -303,3 +315,11 @@ class AccountSynchronizer:
         if table_name:
             logger.warning("非法的表名 %s，已回退为 account_backups", table_name)
         return "account_backups"
+
+    @staticmethod
+    def _log_async_result(future: Future) -> None:
+        try:
+            report = future.result()
+            logger.info("后台同步完成：%s", report.message)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("后台同步失败: %s", exc, exc_info=True)
