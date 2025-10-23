@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import SESSION_COOKIE_NAME, SESSION_COOKIE_SAMESITE, SESSION_COOKIE_SECURE
 from app.models import ApiKeyRequest, LoginRequest
-from app.services.security import require_session, security_service
+from app.security import require_session, security_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import copy
 import json
-import logging
 import re
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -12,9 +11,16 @@ from typing import Dict, Tuple
 import pymysql
 from pymysql.cursors import DictCursor
 
-from app import config
-
-logger = logging.getLogger(__name__)
+from app.config import (
+    ACCOUNTS_DB_HOST,
+    ACCOUNTS_DB_NAME,
+    ACCOUNTS_DB_PASSWORD,
+    ACCOUNTS_DB_PORT,
+    ACCOUNTS_DB_TABLE,
+    ACCOUNTS_DB_USER,
+    ACCOUNTS_SYNC_CONFLICT,
+    logger,
+)
 
 _sync_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="accounts-sync")
 
@@ -44,20 +50,13 @@ class AccountSynchronizer:
     _SUPPORTED_CONFLICT_STRATEGIES = {"prefer_local", "prefer_remote"}
 
     def __init__(self) -> None:
-        self._conflict_strategy = self._normalise_conflict_strategy(config.ACCOUNTS_SYNC_CONFLICT)
-        self._table_name = self._normalise_table_name(config.ACCOUNTS_DB_TABLE)
+        self._conflict_strategy = self._normalise_conflict_strategy(ACCOUNTS_SYNC_CONFLICT)
+        self._table_name = self._normalise_table_name(ACCOUNTS_DB_TABLE)
         self._schema_ready = False
 
     @property
     def is_enabled(self) -> bool:
-        return all(
-            [
-                config.ACCOUNTS_DB_HOST,
-                config.ACCOUNTS_DB_USER,
-                config.ACCOUNTS_DB_PASSWORD,
-                config.ACCOUNTS_DB_NAME,
-            ]
-        )
+        return all([ACCOUNTS_DB_HOST, ACCOUNTS_DB_USER, ACCOUNTS_DB_PASSWORD, ACCOUNTS_DB_NAME])
 
     @property
     def conflict_strategy(self) -> str:
@@ -110,11 +109,8 @@ class AccountSynchronizer:
                         )
                         updated += 1
 
-                # 标记删除
                 for email, row in existing.items():
-                    if email in current_emails:
-                        continue
-                    if row["is_deleted"]:
+                    if email in current_emails or row["is_deleted"]:
                         continue
                     cursor.execute(
                         f"""
@@ -128,7 +124,7 @@ class AccountSynchronizer:
                     marked_deleted += 1
 
             connection.commit()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             connection.rollback()
             logger.exception("同步 accounts.json 到数据库失败: %s", exc)
             raise
@@ -155,14 +151,12 @@ class AccountSynchronizer:
         try:
             self._ensure_schema(connection)
             with connection.cursor(DictCursor) as cursor:
-                cursor.execute(
-                    f"SELECT email, data, checksum, is_deleted FROM `{self._table_name}`"
-                )
+                cursor.execute(f"SELECT email, data, checksum, is_deleted FROM `{self._table_name}`")
                 rows = cursor.fetchall()
         finally:
             connection.close()
 
-        remote_accounts = {}
+        remote_accounts: Dict[str, Dict[str, object]] = {}
         for row in rows:
             try:
                 payload = json.loads(row["data"]) if row["data"] else {}
@@ -290,11 +284,11 @@ class AccountSynchronizer:
 
     def _connect(self) -> "pymysql.connections.Connection":
         return pymysql.connect(
-            host=config.ACCOUNTS_DB_HOST,
-            port=config.ACCOUNTS_DB_PORT,
-            user=config.ACCOUNTS_DB_USER,
-            password=config.ACCOUNTS_DB_PASSWORD,
-            database=config.ACCOUNTS_DB_NAME,
+            host=ACCOUNTS_DB_HOST,
+            port=ACCOUNTS_DB_PORT,
+            user=ACCOUNTS_DB_USER,
+            password=ACCOUNTS_DB_PASSWORD,
+            database=ACCOUNTS_DB_NAME,
             charset="utf8mb4",
             autocommit=False,
             cursorclass=DictCursor,
@@ -323,3 +317,6 @@ class AccountSynchronizer:
             logger.info("后台同步完成：%s", report.message)
         except Exception as exc:  # noqa: BLE001
             logger.error("后台同步失败: %s", exc, exc_info=True)
+
+
+__all__ = ["AccountSynchronizer", "SyncReport"]

@@ -4,7 +4,6 @@ import imaplib
 import socket
 import threading
 from queue import Empty, Queue
-from typing import Dict
 
 from app.config import CONNECTION_TIMEOUT, IMAP_PORT, IMAP_SERVER, MAX_CONNECTIONS, SOCKET_TIMEOUT, logger
 
@@ -12,8 +11,8 @@ from app.config import CONNECTION_TIMEOUT, IMAP_PORT, IMAP_SERVER, MAX_CONNECTIO
 class IMAPConnectionPool:
     def __init__(self, max_connections: int = MAX_CONNECTIONS) -> None:
         self.max_connections = max_connections
-        self.connections: Dict[str, Queue[imaplib.IMAP4_SSL]] = {}
-        self.connection_count: Dict[str, int] = {}
+        self.connections: dict[str, Queue[imaplib.IMAP4_SSL]] = {}
+        self.connection_count: dict[str, int] = {}
         self.lock = threading.Lock()
         logger.info("Initialized IMAP connection pool with max_connections=%s", max_connections)
 
@@ -26,7 +25,7 @@ class IMAPConnectionPool:
             client.authenticate("XOAUTH2", lambda _: auth_string)
             logger.info("Successfully created IMAP connection for %s", email)
             return client
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.error("Failed to create IMAP connection for %s: %s", email, exc)
             raise
 
@@ -44,7 +43,7 @@ class IMAPConnectionPool:
                     connection.noop()
                     logger.debug("Reused existing IMAP connection for %s", email)
                     return connection
-                except Exception:
+                except Exception:  # noqa: BLE001
                     self.connection_count[email] -= 1
             except Empty:
                 pass
@@ -57,7 +56,7 @@ class IMAPConnectionPool:
             logger.warning("Max connections (%s) reached for %s, waiting...", self.max_connections, email)
             try:
                 return queue.get(timeout=30)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.error("Timeout waiting for connection for %s: %s", email, exc)
                 raise
 
@@ -69,7 +68,7 @@ class IMAPConnectionPool:
             connection.noop()
             self.connections[email].put_nowait(connection)
             logger.debug("Successfully returned IMAP connection for %s", email)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             with self.lock:
                 if email in self.connection_count:
                     self.connection_count[email] = max(0, self.connection_count[email] - 1)
@@ -86,7 +85,7 @@ class IMAPConnectionPool:
                             conn = queue.get_nowait()
                             conn.logout()
                             closed += 1
-                        except Exception as exc:
+                        except Exception as exc:  # noqa: BLE001
                             logger.debug("Error closing connection: %s", exc)
                     self.connection_count[email] = 0
                     logger.info("Closed %s connections for %s", closed, email)
@@ -101,3 +100,5 @@ class IMAPConnectionPool:
 
 
 imap_pool = IMAPConnectionPool()
+
+__all__ = ["IMAPConnectionPool", "imap_pool"]

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 
+from app.accounts import account_service
 from app.models import AccountCredentials, AccountListResponse, AccountResponse, SyncResult, UpdateTagsRequest
-from app.services.accounts import account_service
-from app.services.security import require_api_key
+from app.security import require_api_key
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
-from app.services.email_service import email_service
-from app.services.security import require_api_key
+from app.email import email_service
+from app.security import require_api_key
 
 router = APIRouter(prefix="/cache", tags=["cache"])
 

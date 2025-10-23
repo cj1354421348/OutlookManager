@@ -152,62 +152,6 @@
         const successMessage = document.getElementById('successMessage');
         const loginButton = document.getElementById('loginButton');
 
-        async function submitLogin(event) {
-            event.preventDefault();
-            const username = document.getElementById('username').value.trim();
-            const password = document.getElementById('password').value.trim();
-
-            if (!username || !password) {
-                showError('请输入用户名和密码');
-                return;
-            }
-
-            disableForm(true);
-            showError('');
-
-            try {
-                const response = await fetch('/auth/login', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    credentials: 'include',
-                    body: JSON.stringify({ username, password })
-                });
-
-                const text = await response.text();
-                let data = null;
-                if (text) {
-                    try {
-                        data = JSON.parse(text);
-                    } catch (error) {
-                        data = null;
-                    }
-                }
-
-                if (response.status === 401) {
-                    throw new Error(data && data.detail ? data.detail : '用户名或密码错误');
-                }
-
-                if (response.status === 403) {
-                    throw new Error(data && data.detail ? data.detail : '登录已被锁定，请稍后再试');
-                }
-
-                if (!response.ok) {
-                    throw new Error(data && data.detail ? data.detail : '登录失败');
-                }
-
-                showSuccess('登录成功，正在跳转...');
-                setTimeout(() => {
-                    window.location.href = '/';
-                }, 600);
-            } catch (error) {
-                showError(error.message || '登录失败，请稍后重试');
-            } finally {
-                disableForm(false);
-            }
-        }
-
         function showError(message) {
             if (!message) {
                 errorMessage.style.display = 'none';
@@ -224,22 +168,60 @@
             errorMessage.style.display = 'none';
         }
 
-        function disableForm(disabled) {
-            loginButton.disabled = disabled;
+        function setFormDisabled(disabled) {
+            form.querySelectorAll('input, button').forEach(el => { el.disabled = disabled; });
+        }
+
+        async function submitLogin(event) {
+            event.preventDefault();
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value.trim();
+
+            if (!username || !password) {
+                showError('请输入用户名和密码');
+                return;
+            }
+
+            setFormDisabled(true);
+            showError('');
+
+            try {
+                const response = await fetch('/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ username, password })
+                });
+
+                let data = null;
+                try {
+                    data = await response.json();
+                } catch (_) { /* ignore non-JSON/empty body */ }
+
+                if (!response.ok) {
+                    let msg = (data && data.detail) || '登录失败';
+                    if (response.status === 401) msg = (data && data.detail) || '用户名或密码错误';
+                    else if (response.status === 403) msg = (data && data.detail) || '登录已被锁定，请稍后再试';
+                    throw new Error(msg);
+                }
+
+                showSuccess('登录成功，正在跳转...');
+                setTimeout(() => { window.location.href = '/'; }, 600);
+            } catch (error) {
+                showError(error.message || '登录失败，请稍后重试');
+            } finally {
+                setFormDisabled(false);
+            }
         }
 
         form.addEventListener('submit', submitLogin);
 
-        // 如果已有会话，直接跳转首页
+        // 已有会话则直接跳转首页
         (async () => {
             try {
                 const response = await fetch('/auth/session', { credentials: 'include' });
-                if (response.ok) {
-                    window.location.href = '/';
-                }
-            } catch (error) {
-                // ignore
-            }
+                if (response.ok) window.location.href = '/';
+            } catch (_) {}
         })();
     </script>
 </body>

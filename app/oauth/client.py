@@ -34,6 +34,6 @@ async def fetch_access_token(credentials: AccountCredentials) -> str:
     except httpx.RequestError as exc:
         logger.error("Request error getting access token for %s: %s", credentials.email, exc)
         raise HTTPException(status_code=500, detail="Network error during token acquisition")
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.error("Unexpected error getting access token for %s: %s", credentials.email, exc)
         raise HTTPException(status_code=500, detail="Token acquisition failed")

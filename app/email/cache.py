@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 from app.config import CACHE_EXPIRE_TIME
 
 
 class EmailCache:
     def __init__(self, expire_seconds: int = CACHE_EXPIRE_TIME) -> None:
-        self._store: Dict[str, Tuple[Any, float]] = {}
+        self._store: dict[str, tuple[Any, float]] = {}
         self._expire_seconds = expire_seconds
         self._lock = threading.Lock()
 
-    def get(self, key: str, force_refresh: bool = False) -> Optional[Any]:
+    def get(self, key: str, force_refresh: bool = False) -> Any | None:
         if force_refresh:
             self.invalidate(key)
             return None
@@ -36,7 +36,7 @@ class EmailCache:
         with self._lock:
             self._store.pop(key, None)
 
-    def clear(self, prefix: Optional[str] = None) -> int:
+    def clear(self, prefix: str | None = None) -> int:
         with self._lock:
             if prefix is None:
                 count = len(self._store)
@@ -49,3 +49,5 @@ class EmailCache:
 
 
 email_cache = EmailCache()
+
+__all__ = ["EmailCache", "email_cache"]

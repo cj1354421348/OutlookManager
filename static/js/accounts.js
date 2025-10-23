@@ -1,0 +1,665 @@
+window.currentEditAccount = null;
+window.currentEditTags = [];
+
+function clearAddAccountForm() {
+    const emailInput = document.getElementById('email');
+    const refreshInput = document.getElementById('refreshToken');
+    const clientInput = document.getElementById('clientId');
+    const tagInput = document.getElementById('accountTags');
+
+    if (emailInput) emailInput.value = '';
+    if (refreshInput) refreshInput.value = '';
+    if (clientInput) clientInput.value = '';
+    if (tagInput) tagInput.value = '';
+}
+
+function clearBatchForm() {
+    const batchInput = document.getElementById('batchAccounts');
+    if (batchInput) batchInput.value = '';
+}
+
+function validateBatchFormat() {
+    const batchInput = document.getElementById('batchAccounts');
+    if (!batchInput) return;
+
+    const batchText = batchInput.value.trim();
+    if (!batchText) {
+        showNotification('请先输入账户信息', 'warning');
+        return;
+    }
+
+    const lines = batchText.split('\n').filter((line) => line.trim());
+    let validCount = 0;
+    const invalidLines = [];
+
+    lines.forEach((line, index) => {
+        const parts = line.split('----').map((p) => p.trim());
+        if (parts.length === 4 && parts.every((part) => part.length > 0)) {
+            validCount += 1;
+        } else {
+            invalidLines.push(index + 1);
+        }
+    });
+
+    if (invalidLines.length === 0) {
+        showNotification(`格式验证通过！共 ${validCount} 个有效账户`, 'success');
+    } else {
+        showNotification(`发现 ${invalidLines.length} 行格式错误：第 ${invalidLines.join(', ')} 行`, 'error');
+    }
+}
+
+async function loadAccounts(page = 1, resetSearch = false) {
+    if (resetSearch) {
+        window.accountEmailSearchTerm = '';
+        window.accountTagSearchTerm = '';
+        const emailSearchInput = document.getElementById('accountEmailSearch');
+        const tagSearchInput = document.getElementById('tagSearch');
+        if (emailSearchInput) emailSearchInput.value = '';
+        if (tagSearchInput) tagSearchInput.value = '';
+        page = 1;
+    }
+
+    window.accountsCurrentPage = page;
+
+    const accountsList = document.getElementById('accountsList');
+    const statsBlock = document.getElementById('accountsStats');
+    const pagination = document.getElementById('accountsPagination');
+
+    if (accountsList) {
+        accountsList.innerHTML = '<div class="loading"><div class="loading-spinner"></div>正在加载账户列表...</div>';
+    }
+    if (statsBlock) statsBlock.style.display = 'none';
+    if (pagination) pagination.style.display = 'none';
+
+    try {
+        const params = new URLSearchParams({
+            page: window.accountsCurrentPage,
+            page_size: window.accountsPageSize,
+        });
+
+        if (window.accountEmailSearchTerm) {
+            params.append('email_search', window.accountEmailSearchTerm);
+        }
+        if (window.accountTagSearchTerm) {
+            params.append('tag_search', window.accountTagSearchTerm);
+        }
+
+        const data = await apiRequest(`/accounts?${params.toString()}`);
+
+        window.accounts = data.accounts || [];
+        window.accountsTotalCount = data.total_accounts || 0;
+        window.accountsTotalPages = data.total_pages || 0;
+
+        updateAccountsStats();
+
+        if (!accountsList) return;
+
+        if (window.accounts.length === 0) {
+            accountsList.innerHTML = '<div class="text-center" style="padding: 40px; color: #64748b;">暂无符合条件的账户</div>';
+            return;
+        }
+
+        accountsList.innerHTML = window.accounts.map(createAccountItem).join('');
+        updateAccountsPagination();
+    } catch (error) {
+        if (accountsList) {
+            accountsList.innerHTML = `<div class="error">加载失败: ${error.message}</div>`;
+        }
+    }
+}
+
+function createAccountItem(account) {
+    const safeEmail = account.email_id.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const tags = account.tags || [];
+    const tagsHtml = tags.length
+        ? `<div class="account-tags">${tags.map((tag) => `<span class="account-tag">${tag}</span>`).join('')}</div>`
+        : '';
+    const tagsPayload = JSON.stringify(tags).replace(/"/g, '&quot;');
+
+    return `
+        <div class="account-item" onclick="viewAccountEmails('${safeEmail}')" oncontextmenu="showAccountContextMenu(event, '${safeEmail}')">
+            <div class="account-info">
+                <div class="account-avatar">${safeEmail.charAt(0).toUpperCase()}</div>
+                <div class="account-details">
+                    <h4>${safeEmail}</h4>
+                    <p>状态: ${account.status === 'active' ? '正常' : '异常'}</p>
+                    ${tagsHtml}
+                </div>
+            </div>
+            <div class="account-actions" onclick="event.stopPropagation()">
+                <button class="btn btn-primary btn-sm" onclick="viewAccountEmails('${safeEmail}')">
+                    <span>📧</span>
+                    查看邮件
+                </button>
+                <button class="btn btn-secondary btn-sm" onclick="editAccountTags('${safeEmail}', ${tagsPayload})">
+                    <span>🏷️</span>
+                    管理标签
+                </button>
+                <button class="btn btn-danger btn-sm" onclick="deleteAccount('${safeEmail}')">
+                    <span>🗑️</span>
+                    删除
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function updateAccountsStats() {
+    const statsBlock = document.getElementById('accountsStats');
+    const totalSpan = document.getElementById('totalAccounts');
+    const pageSpan = document.getElementById('currentPage');
+    const sizeSpan = document.getElementById('pageSize');
+
+    if (totalSpan) totalSpan.textContent = window.accountsTotalCount;
+    if (pageSpan) pageSpan.textContent = window.accountsCurrentPage;
+    if (sizeSpan) sizeSpan.textContent = window.accountsPageSize;
+    if (statsBlock) statsBlock.style.display = window.accountsTotalCount > 0 ? 'block' : 'none';
+}
+
+function updateAccountsPagination() {
+    const pagination = document.getElementById('accountsPagination');
+    const prevBtn = document.getElementById('prevPageBtn');
+    const nextBtn = document.getElementById('nextPageBtn');
+    const pageNumbers = document.getElementById('pageNumbers');
+
+    if (!pagination || !prevBtn || !nextBtn || !pageNumbers) return;
+
+    if (window.accountsTotalPages <= 1) {
+        pagination.style.display = 'none';
+        return;
+    }
+
+    pagination.style.display = 'flex';
+    prevBtn.disabled = window.accountsCurrentPage <= 1;
+    nextBtn.disabled = window.accountsCurrentPage >= window.accountsTotalPages;
+    pageNumbers.innerHTML = generatePageNumbers();
+}
+
+function generatePageNumbers() {
+    const maxVisiblePages = 5;
+    let startPage = Math.max(1, window.accountsCurrentPage - Math.floor(maxVisiblePages / 2));
+    let endPage = Math.min(window.accountsTotalPages, startPage + maxVisiblePages - 1);
+
+    if (endPage - startPage < maxVisiblePages - 1) {
+        startPage = Math.max(1, endPage - maxVisiblePages + 1);
+    }
+
+    let html = '';
+
+    if (startPage > 1) {
+        html += `<span class="page-number" onclick="changePage(1)">1</span>`;
+        if (startPage > 2) {
+            html += '<span class="page-number disabled">...</span>';
+        }
+    }
+
+    for (let i = startPage; i <= endPage; i += 1) {
+        const activeClass = i === window.accountsCurrentPage ? 'active' : '';
+        html += `<span class="page-number ${activeClass}" onclick="changePage(${i})">${i}</span>`;
+    }
+
+    if (endPage < window.accountsTotalPages) {
+        if (endPage < window.accountsTotalPages - 1) {
+            html += '<span class="page-number disabled">...</span>';
+        }
+        html += `<span class="page-number" onclick="changePage(${window.accountsTotalPages})">${window.accountsTotalPages}</span>`;
+    }
+
+    return html;
+}
+
+function changePage(direction) {
+    let newPage = window.accountsCurrentPage;
+    if (direction === 'prev') {
+        newPage = Math.max(1, window.accountsCurrentPage - 1);
+    } else if (direction === 'next') {
+        newPage = Math.min(window.accountsTotalPages, window.accountsCurrentPage + 1);
+    } else {
+        newPage = Number(direction);
+    }
+
+    if (Number.isNaN(newPage) || newPage === window.accountsCurrentPage) {
+        return;
+    }
+
+    if (newPage >= 1 && newPage <= window.accountsTotalPages) {
+        loadAccounts(newPage);
+    }
+}
+
+function searchAccounts() {
+    const emailSearchInput = document.getElementById('accountEmailSearch');
+    const tagSearchInput = document.getElementById('tagSearch');
+
+    window.accountEmailSearchTerm = emailSearchInput ? emailSearchInput.value.trim() : '';
+    window.accountTagSearchTerm = tagSearchInput ? tagSearchInput.value.trim() : '';
+
+    loadAccounts(1);
+}
+
+function clearSearch() {
+    const emailSearchInput = document.getElementById('accountEmailSearch');
+    const tagSearchInput = document.getElementById('tagSearch');
+
+    if (emailSearchInput) emailSearchInput.value = '';
+    if (tagSearchInput) tagSearchInput.value = '';
+
+    window.accountEmailSearchTerm = '';
+    window.accountTagSearchTerm = '';
+    loadAccounts(1);
+}
+
+function handleSearchKeyPress(event) {
+    if (event.key === 'Enter') {
+        searchAccounts();
+    }
+}
+
+async function syncAccountsToServer(button) {
+    const target = button || document.getElementById('syncToServerBtn');
+    setButtonLoading(target, '推送中...');
+    try {
+        const result = await apiRequest('/accounts/sync/push', { method: 'POST' });
+        showNotification(formatSyncMessage(result, '推送完成'), 'success');
+        loadAccounts(window.accountsCurrentPage);
+    } catch (error) {
+        showNotification(`同步到服务器失败: ${error.message}`, 'error');
+    } finally {
+        resetButtonLoading(target);
+    }
+}
+
+async function syncAccountsFromServer(button) {
+    const target = button || document.getElementById('syncFromServerBtn');
+    setButtonLoading(target, '拉取中...');
+    try {
+        const result = await apiRequest('/accounts/sync/pull', { method: 'POST' });
+        showNotification(formatSyncMessage(result, '拉取完成'), 'success');
+        loadAccounts(window.accountsCurrentPage);
+    } catch (error) {
+        showNotification(`从服务器同步失败: ${error.message}`, 'error');
+    } finally {
+        resetButtonLoading(target);
+    }
+}
+
+async function addAccount() {
+    const emailInput = document.getElementById('email');
+    const refreshInput = document.getElementById('refreshToken');
+    const clientInput = document.getElementById('clientId');
+    const tagsInput = document.getElementById('accountTags');
+
+    const email = emailInput ? emailInput.value.trim() : '';
+    const refreshToken = refreshInput ? refreshInput.value.trim() : '';
+    const clientId = clientInput ? clientInput.value.trim() : '';
+    const tags = tagsInput && tagsInput.value.trim()
+        ? tagsInput.value.split(',').map((tag) => tag.trim()).filter(Boolean)
+        : [];
+
+    if (!email || !refreshToken || !clientId) {
+        showNotification('请填写所有必填字段', 'warning');
+        return;
+    }
+
+    const addBtn = document.getElementById('addAccountBtn');
+    if (addBtn) {
+        addBtn.disabled = true;
+        addBtn.innerHTML = '<span>⏳</span> 添加中...';
+    }
+
+    try {
+        const response = await apiRequest('/accounts', {
+            method: 'POST',
+            body: JSON.stringify({
+                email,
+                refresh_token: refreshToken,
+                client_id: clientId,
+                tags,
+            }),
+        });
+
+        showNotification(response?.message || '账户添加成功', 'success');
+        clearAddAccountForm();
+        showPage('accounts');
+        loadAccounts(1, true);
+    } catch (error) {
+        showNotification(`添加账户失败: ${error.message}`, 'error');
+    } finally {
+        if (addBtn) {
+            addBtn.disabled = false;
+            addBtn.innerHTML = '<span>➕</span> 添加账户';
+        }
+    }
+}
+
+async function batchAddAccounts() {
+    const batchInput = document.getElementById('batchAccounts');
+    if (!batchInput) return;
+
+    const batchText = batchInput.value.trim();
+    if (!batchText) {
+        showNotification('请输入账户信息', 'warning');
+        return;
+    }
+
+    const lines = batchText.split('\n').filter((line) => line.trim());
+    if (lines.length === 0) {
+        showNotification('没有有效的账户信息', 'warning');
+        return;
+    }
+
+    showBatchProgress();
+    const batchBtn = document.getElementById('batchAddBtn');
+    if (batchBtn) {
+        batchBtn.disabled = true;
+        batchBtn.innerHTML = '<span>⏳</span> 添加中...';
+    }
+
+    let successCount = 0;
+    let failCount = 0;
+    const results = [];
+
+    for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i];
+        const parts = line.split('----').map((p) => p.trim());
+
+        updateBatchProgress(i + 1, lines.length, `处理第 ${i + 1} 个账户...`);
+
+        if (parts.length !== 4) {
+            failCount += 1;
+            results.push({
+                email: parts[0] || '格式错误',
+                status: 'error',
+                message: '格式错误：应为 邮箱----密码----刷新令牌----客户端ID',
+            });
+            continue;
+        }
+
+        const [email, , refreshToken, clientId] = parts;
+
+        try {
+            await apiRequest('/accounts', {
+                method: 'POST',
+                body: JSON.stringify({
+                    email,
+                    refresh_token: refreshToken,
+                    client_id: clientId,
+                }),
+            });
+            successCount += 1;
+            results.push({ email, status: 'success', message: '添加成功' });
+        } catch (error) {
+            failCount += 1;
+            results.push({ email, status: 'error', message: error.message });
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    updateBatchProgress(lines.length, lines.length, '批量添加完成！');
+    showBatchResults(results);
+
+    if (successCount > 0) {
+        showNotification(`批量添加完成！成功 ${successCount} 个，失败 ${failCount} 个`, 'success');
+        if (failCount === 0) {
+            setTimeout(() => {
+                clearBatchForm();
+                showPage('accounts');
+            }, 3000);
+        }
+        loadAccounts(1, true);
+    } else {
+        showNotification('所有账户添加失败，请检查账户信息', 'error');
+    }
+
+    if (batchBtn) {
+        batchBtn.disabled = false;
+        batchBtn.innerHTML = '<span>📦</span> 开始批量添加';
+    }
+}
+
+function showBatchProgress() {
+    const progress = document.getElementById('batchProgress');
+    const results = document.getElementById('batchResults');
+    if (progress) progress.classList.remove('hidden');
+    if (results) results.classList.add('hidden');
+}
+
+function hideBatchProgress() {
+    const progress = document.getElementById('batchProgress');
+    const results = document.getElementById('batchResults');
+    if (progress) progress.classList.add('hidden');
+    if (results) results.classList.add('hidden');
+}
+
+function updateBatchProgress(current, total, message) {
+    const fill = document.getElementById('batchProgressFill');
+    const text = document.getElementById('batchProgressText');
+    const count = document.getElementById('batchProgressCount');
+
+    const percentage = Math.min(100, (current / total) * 100);
+    if (fill) fill.style.width = `${percentage}%`;
+    if (text) text.textContent = message;
+    if (count) count.textContent = `${current} / ${total}`;
+}
+
+function showBatchResults(results) {
+    const resultsContainer = document.getElementById('batchResultsList');
+    const resultsBlock = document.getElementById('batchResults');
+    if (!resultsContainer || !resultsBlock) return;
+
+    const successResults = results.filter((r) => r.status === 'success');
+    const errorResults = results.filter((r) => r.status === 'error');
+
+    let html = '';
+
+    if (successResults.length > 0) {
+        html += '<div style="margin-bottom: 16px;">'
+            + '<h5 style="color: #16a34a; margin-bottom: 8px;">✅ 成功添加 (' + successResults.length + ')</h5>'
+            + '<div style="background: #f0fdf4; padding: 12px; border-radius: 6px; border: 1px solid #bbf7d0;">'
+            + successResults.map((result) => `<div style="font-size: 0.875rem; color: #15803d; margin-bottom: 4px;">• ${result.email}</div>`).join('')
+            + '</div></div>';
+    }
+
+    if (errorResults.length > 0) {
+        html += '<div>'
+            + '<h5 style="color: #dc2626; margin-bottom: 8px;">❌ 添加失败 (' + errorResults.length + ')</h5>'
+            + '<div style="background: #fef2f2; padding: 12px; border-radius: 6px; border: 1px solid #fecaca;">'
+            + errorResults.map((result) => `
+                <div style="font-size: 0.875rem; color: #dc2626; margin-bottom: 8px;">
+                    <strong>• ${result.email}</strong><br>
+                    <span style="color: #991b1b; font-size: 0.75rem;">&nbsp;&nbsp;${result.message}</span>
+                </div>`).join('')
+            + '</div></div>';
+    }
+
+    resultsContainer.innerHTML = html || '<div class="text-sm" style="color: #64748b;">暂无结果</div>';
+    resultsBlock.classList.remove('hidden');
+}
+
+function editAccountTags(emailId, tags) {
+    window.contextMenuTarget = emailId;
+    window.currentEditAccount = emailId;
+    window.currentEditTags = Array.isArray(tags) ? [...tags] : [];
+
+    const title = document.querySelector('#tagsModal .modal-header h3');
+    if (title) {
+        title.textContent = `管理 ${emailId} 的标签`;
+    }
+
+    renderCurrentTags();
+    const modal = document.getElementById('tagsModal');
+    if (modal) {
+        modal.style.display = 'flex';
+    }
+}
+
+function renderCurrentTags() {
+    const tagsList = document.getElementById('currentTagsList');
+    if (!tagsList) return;
+
+    if (!window.currentEditTags || window.currentEditTags.length === 0) {
+        tagsList.innerHTML = '<p class="text-sm" style="color: #64748b;">暂无标签</p>';
+        return;
+    }
+
+    tagsList.innerHTML = window.currentEditTags
+        .map((tag) => `
+            <div class="tag-item">
+                <span class="tag-name">${tag}</span>
+                <button class="tag-delete" onclick="removeTag('${tag.replace(/'/g, '&#39;')}')">×</button>
+            </div>
+        `)
+        .join('');
+}
+
+function addTag() {
+    const newTagInput = document.getElementById('newTag');
+    const newTag = newTagInput ? newTagInput.value.trim() : '';
+
+    if (!newTag) {
+        showNotification('标签名称不能为空', 'warning');
+        return;
+    }
+
+    if (window.currentEditTags.includes(newTag)) {
+        showNotification('标签已存在', 'warning');
+        return;
+    }
+
+    window.currentEditTags.push(newTag);
+    if (newTagInput) newTagInput.value = '';
+    renderCurrentTags();
+}
+
+function removeTag(tag) {
+    window.currentEditTags = window.currentEditTags.filter((t) => t !== tag);
+    renderCurrentTags();
+}
+
+function closeTagsModal() {
+    const modal = document.getElementById('tagsModal');
+    if (modal) modal.style.display = 'none';
+    window.currentEditAccount = null;
+    window.currentEditTags = [];
+}
+
+async function saveAccountTags() {
+    if (!window.currentEditAccount) {
+        closeTagsModal();
+        return;
+    }
+
+    try {
+        const response = await apiRequest(`/accounts/${window.currentEditAccount}/tags`, {
+            method: 'PUT',
+            body: JSON.stringify({ tags: window.currentEditTags }),
+        });
+
+        showNotification(response?.message || '标签更新成功', 'success');
+        closeTagsModal();
+        loadAccounts(window.accountsCurrentPage);
+    } catch (error) {
+        showNotification(`标签更新失败: ${error.message}`, 'error');
+    }
+}
+
+async function deleteAccount(emailId) {
+    if (!confirm(`确定要删除账户 ${emailId} 吗？`)) {
+        return;
+    }
+
+    try {
+        const response = await apiRequest(`/accounts/${emailId}`, { method: 'DELETE' });
+        showNotification(response?.message || '账户已删除', 'success');
+        loadAccounts(window.accountsCurrentPage);
+    } catch (error) {
+        showNotification(`删除账户失败: ${error.message}`, 'error');
+    }
+}
+
+function showAccountContextMenu(event, emailId) {
+    event.preventDefault();
+    event.stopPropagation();
+
+    window.contextMenuTarget = emailId;
+    const contextMenu = document.getElementById('contextMenu');
+    if (!contextMenu) return;
+
+    contextMenu.style.left = `${event.pageX}px`;
+    contextMenu.style.top = `${event.pageY}px`;
+    contextMenu.style.display = 'block';
+
+    setTimeout(() => {
+        document.addEventListener('click', hideContextMenu, { once: true });
+    }, 10);
+}
+
+function hideContextMenu() {
+    const contextMenu = document.getElementById('contextMenu');
+    if (contextMenu) contextMenu.style.display = 'none';
+    window.contextMenuTarget = null;
+}
+
+function openInNewTab() {
+    if (!window.contextMenuTarget) return;
+    const url = `${window.location.origin}/#/emails/${encodeURIComponent(window.contextMenuTarget)}`;
+    window.open(url, '_blank');
+    hideContextMenu();
+}
+
+function copyAccountLink() {
+    if (!window.contextMenuTarget) return;
+    const url = `${window.location.origin}/#/emails/${encodeURIComponent(window.contextMenuTarget)}`;
+
+    if (navigator.clipboard) {
+        navigator.clipboard.writeText(url)
+            .then(() => showNotification('链接已复制到剪贴板', 'success'))
+            .catch(() => fallbackCopyText(url));
+    } else {
+        fallbackCopyText(url);
+    }
+
+    hideContextMenu();
+}
+
+function contextEditTags() {
+    if (!window.contextMenuTarget) return;
+    const account = window.accounts.find((acc) => acc.email_id === window.contextMenuTarget);
+    if (account) {
+        editAccountTags(window.contextMenuTarget, account.tags || []);
+    }
+    hideContextMenu();
+}
+
+function contextDeleteAccount() {
+    if (window.contextMenuTarget) {
+        deleteAccount(window.contextMenuTarget);
+    }
+    hideContextMenu();
+}
+
+window.clearAddAccountForm = clearAddAccountForm;
+window.clearBatchForm = clearBatchForm;
+window.validateBatchFormat = validateBatchFormat;
+window.loadAccounts = loadAccounts;
+window.searchAccounts = searchAccounts;
+window.clearSearch = clearSearch;
+window.handleSearchKeyPress = handleSearchKeyPress;
+window.syncAccountsToServer = syncAccountsToServer;
+window.syncAccountsFromServer = syncAccountsFromServer;
+window.addAccount = addAccount;
+window.batchAddAccounts = batchAddAccounts;
+window.hideBatchProgress = hideBatchProgress;
+window.editAccountTags = editAccountTags;
+window.addTag = addTag;
+window.removeTag = removeTag;
+window.closeTagsModal = closeTagsModal;
+window.saveAccountTags = saveAccountTags;
+window.deleteAccount = deleteAccount;
+window.showAccountContextMenu = showAccountContextMenu;
+window.openInNewTab = openInNewTab;
+window.copyAccountLink = copyAccountLink;
+window.contextEditTags = contextEditTags;
+window.contextDeleteAccount = contextDeleteAccount;
+window.changePage = changePage;

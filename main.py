@@ -1,5 +1,4 @@
-"""
-Outlook邮件管理系统 - FastAPI入口
+"""Outlook邮件管理系统 - FastAPI入口
 
 FastAPI 应用初始化、生命周期管理及路由装载。
 """
@@ -14,8 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.config import MAX_CONNECTIONS, logger
+from app.infrastructure.imap import imap_pool
 from app.routes import routers
-from app.services.imap_pool import imap_pool
 
 
 @asynccontextmanager
@@ -50,6 +49,18 @@ for router in routers:
     app.include_router(router)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.middleware("http")
+async def add_static_cache_headers(request, call_next):
+    response = await call_next(request)
+    try:
+        if request.url.path.startswith("/static/"):
+            # 轻量缓存：1小时，避免过度缓存导致更新不生效
+            response.headers.setdefault("Cache-Control", "public, max-age=3600")
+    except Exception:
+        pass
+    return response
 
 
 if __name__ == "__main__":

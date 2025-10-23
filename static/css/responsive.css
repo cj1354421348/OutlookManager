@@ -1,0 +1,59 @@
+/* 响应式设计 */
+@media (max-width: 768px) {
+    .app-container {
+        flex-direction: column;
+    }
+
+    .sidebar {
+        width: 100%;
+        height: auto;
+        border-right: none;
+        border-bottom: 1px solid #e2e8f0;
+    }
+
+    .sidebar-nav {
+        display: flex;
+        overflow-x: auto;
+        padding: 10px 0;
+    }
+
+    .nav-item {
+        white-space: nowrap;
+        padding: 8px 16px;
+        margin: 0 4px;
+        border-radius: 6px;
+    }
+
+    .main-body {
+        padding: 16px;
+    }
+
+    .modal-content {
+        width: 95%;
+        max-height: 95%;
+    }
+
+    .modal-body {
+        padding: 16px;
+    }
+
+    .account-item {
+        padding: 12px;
+    }
+
+    .account-avatar {
+        width: 32px;
+        height: 32px;
+        font-size: 0.875rem;
+    }
+
+    .email-item {
+        padding: 12px;
+    }
+
+    .email-avatar {
+        width: 32px;
+        height: 32px;
+        font-size: 0.875rem;
+    }
+}

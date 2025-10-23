@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import FileResponse, RedirectResponse
 
 from app.config import SESSION_COOKIE_NAME
-from app.services.security import require_api_key, security_service
+from app.security import require_api_key, security_service
 
 router = APIRouter(tags=["web"])
 
