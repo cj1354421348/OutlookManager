@@ -6,7 +6,7 @@ import re
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Dict, Tuple
+from typing import Dict, Iterable, Set, Tuple
 
 import pymysql
 from pymysql.cursors import DictCursor
@@ -52,6 +52,7 @@ class AccountSynchronizer:
     def __init__(self) -> None:
         self._conflict_strategy = self._normalise_conflict_strategy(ACCOUNTS_SYNC_CONFLICT)
         self._table_name = self._normalise_table_name(ACCOUNTS_DB_TABLE)
+        self._tags_table = f"{self._table_name}_tags"
         self._schema_ready = False
 
     @property
@@ -76,10 +77,13 @@ class AccountSynchronizer:
                 cursor.execute(f"SELECT email, checksum, is_deleted, tags FROM `{self._table_name}`")
                 existing = {row["email"]: row for row in cursor.fetchall()}
 
-                current_emails = set(accounts.keys())
+            normalised_accounts, tags_target = self._prepare_tags_snapshot(accounts)
+            current_emails = set(normalised_accounts.keys())
+            all_emails_for_tags = set(existing.keys()) | current_emails
+            tags_existing = self._fetch_existing_tags(connection, all_emails_for_tags)
 
-                for email, payload in accounts.items():
-                    normalised_payload = self._normalise_payload(payload)
+            with connection.cursor() as cursor:
+                for email, normalised_payload in normalised_accounts.items():
                     serialised = self._serialise_payload(normalised_payload)
                     tags_serialised = self._serialise_tags(normalised_payload.get("tags", []))
                     checksum = self._checksum(serialised)
@@ -126,6 +130,14 @@ class AccountSynchronizer:
                     )
                     marked_deleted += 1
 
+            for email in all_emails_for_tags:
+                self._apply_tag_mutations(
+                    connection,
+                    email,
+                    tags_existing.get(email, set()),
+                    tags_target.get(email, set()),
+                )
+
             connection.commit()
         except Exception as exc:  # noqa: BLE001
             connection.rollback()
@@ -150,12 +162,14 @@ class AccountSynchronizer:
             raise RuntimeError("数据库同步未配置")
 
         connection = self._connect()
+        tags_map: Dict[str, Set[str]] = {}
 
         try:
             self._ensure_schema(connection)
             with connection.cursor(DictCursor) as cursor:
                 cursor.execute(f"SELECT email, data, checksum, is_deleted, tags FROM `{self._table_name}`")
                 rows = cursor.fetchall()
+            tags_map = self._fetch_existing_tags(connection, [row["email"] for row in rows])
         finally:
             connection.close()
 
@@ -166,14 +180,17 @@ class AccountSynchronizer:
             except json.JSONDecodeError:
                 logger.warning("数据库中的账户 %s 数据非法，跳过", row["email"])
                 continue
-            tags_from_column = self._deserialise_tags(row.get("tags"))
+            stored_tags = sorted(tags_map.get(row["email"], []))
+            tags_from_column = stored_tags or self._deserialise_tags(row.get("tags"))
             if tags_from_column:
                 payload["tags"] = tags_from_column
             elif "tags" not in payload:
                 payload["tags"] = []
+            normalised_payload = self._normalise_payload(payload)
+            combined_checksum = self._checksum(self._serialise_payload(normalised_payload)) or row["checksum"]
             remote_accounts[row["email"]] = {
-                "data": self._normalise_payload(payload),
-                "checksum": row["checksum"],
+                "data": normalised_payload,
+                "checksum": combined_checksum,
                 "is_deleted": bool(row["is_deleted"]),
             }
 
@@ -222,7 +239,11 @@ class AccountSynchronizer:
                 continue
 
             if self._conflict_strategy == "prefer_local":
-                skipped += 1
+                if self._merge_tags_from_remote(merged[email], remote_payload):
+                    updated += 1
+                    changed = True
+                else:
+                    skipped += 1
                 continue
 
             merged[email] = remote_payload
@@ -245,7 +266,7 @@ class AccountSynchronizer:
         if self._schema_ready:
             return
 
-        with connection.cursor() as cursor:
+        with connection.cursor(DictCursor) as cursor:
             cursor.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS `{self._table_name}` (
@@ -267,8 +288,137 @@ class AccountSynchronizer:
                     f"UPDATE `{self._table_name}` SET `tags` = %s WHERE `tags` IS NULL",
                     (self._serialise_tags([]),),
                 )
+            cursor.execute(
+                f"""
+                CREATE TABLE IF NOT EXISTS `{self._tags_table}` (
+                    `email` VARCHAR(255) NOT NULL,
+                    `tag` VARCHAR(255) NOT NULL,
+                    PRIMARY KEY (`email`, `tag`),
+                    KEY `idx_account_tags_email` (`email`)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+            cursor.execute(f"SELECT COUNT(*) AS cnt FROM `{self._tags_table}`")
+            tag_count_row = cursor.fetchone() or {"cnt": 0}
+            if (tag_count_row.get("cnt") or 0) == 0:
+                cursor.execute(f"SELECT email, tags FROM `{self._table_name}` WHERE tags IS NOT NULL AND tags != ''")
+                seed_rows = cursor.fetchall()
+                seed_pairs: list[tuple[str, str]] = []
+                for seed in seed_rows:
+                    email = seed.get("email")
+                    if not email:
+                        continue
+                    for tag in self._deserialise_tags(seed.get("tags")):
+                        if tag:
+                            seed_pairs.append((email, tag))
+                for chunk in self._chunked(seed_pairs, 500):
+                    cursor.executemany(
+                        f"""
+                        INSERT INTO `{self._tags_table}` (email, tag)
+                        VALUES (%s, %s)
+                        ON DUPLICATE KEY UPDATE tag = VALUES(tag)
+                        """,
+                        chunk,
+                    )
         connection.commit()
         self._schema_ready = True
+
+    def _prepare_tags_snapshot(
+        self,
+        accounts: Dict[str, Dict[str, object]],
+    ) -> tuple[Dict[str, Dict[str, object]], Dict[str, Set[str]]]:
+        normalised_accounts: Dict[str, Dict[str, object]] = {}
+        tags_snapshot: Dict[str, Set[str]] = {}
+        for email, payload in accounts.items():
+            normalised = self._normalise_payload(payload)
+            normalised_accounts[email] = normalised
+            tags_snapshot[email] = set(normalised.get("tags", []))
+        return normalised_accounts, tags_snapshot
+
+    def _fetch_existing_tags(
+        self,
+        connection: "pymysql.connections.Connection",
+        emails: Iterable[str],
+    ) -> Dict[str, Set[str]]:
+        email_list = [email for email in dict.fromkeys(emails) if email]
+        if not email_list:
+            return {}
+
+        tags_map: Dict[str, Set[str]] = {email: set() for email in email_list}
+        with connection.cursor(DictCursor) as cursor:
+            for chunk in self._chunked(email_list, 500):
+                placeholders = ",".join(["%s"] * len(chunk))
+                cursor.execute(
+                    f"SELECT email, tag FROM `{self._tags_table}` WHERE email IN ({placeholders})",
+                    tuple(chunk),
+                )
+                for row in cursor.fetchall():
+                    email = row.get("email")
+                    tag = row.get("tag")
+                    if not email or not tag:
+                        continue
+                    tags_map.setdefault(email, set()).add(tag)
+        return tags_map
+
+    def _apply_tag_mutations(
+        self,
+        connection: "pymysql.connections.Connection",
+        email: str,
+        existing: Set[str] | None,
+        target: Set[str] | None,
+    ) -> None:
+        existing_tags = existing or set()
+        target_tags = target or set()
+        if existing_tags == target_tags:
+            return
+
+        to_add = sorted(target_tags - existing_tags)
+        to_remove = sorted(existing_tags - target_tags)
+
+        if to_add:
+            payload = [(email, tag) for tag in to_add]
+            with connection.cursor() as cursor:
+                for chunk in self._chunked(payload, 500):
+                    cursor.executemany(
+                        f"""
+                        INSERT INTO `{self._tags_table}` (email, tag)
+                        VALUES (%s, %s)
+                        ON DUPLICATE KEY UPDATE tag = VALUES(tag)
+                        """,
+                        chunk,
+                    )
+
+        if to_remove:
+            with connection.cursor() as cursor:
+                for chunk in self._chunked(to_remove, 500):
+                    placeholders = ",".join(["%s"] * len(chunk))
+                    cursor.execute(
+                        f"DELETE FROM `{self._tags_table}` WHERE email = %s AND tag IN ({placeholders})",
+                        (email, *chunk),
+                    )
+
+    @staticmethod
+    def _chunked(items: Iterable[object], size: int) -> Iterable[list[object]]:
+        batch: list[object] = []
+        for item in items:
+            batch.append(item)
+            if len(batch) >= size:
+                yield batch
+                batch = []
+        if batch:
+            yield batch
+
+    @staticmethod
+    @staticmethod
+    def _merge_tags_from_remote(local_payload: Dict[str, object], remote_payload: Dict[str, object]) -> bool:
+        remote_tags = remote_payload.get("tags", []) or []
+        local_tags = local_payload.get("tags", []) or []
+        normalised_remote = [str(tag).strip() for tag in remote_tags if str(tag).strip()]
+        normalised_local = [str(tag).strip() for tag in local_tags if str(tag).strip()]
+        if sorted(normalised_remote) == sorted(normalised_local):
+            return False
+        local_payload["tags"] = normalised_remote
+        return True
 
     @staticmethod
     def _normalise_payload(payload: Dict[str, object] | None) -> Dict[str, object]:
