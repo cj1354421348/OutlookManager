@@ -73,7 +73,7 @@ class AccountSynchronizer:
             self._ensure_schema(connection)
 
             with connection.cursor(DictCursor) as cursor:
-                cursor.execute(f"SELECT email, checksum, is_deleted FROM `{self._table_name}`")
+                cursor.execute(f"SELECT email, checksum, is_deleted, tags FROM `{self._table_name}`")
                 existing = {row["email"]: row for row in cursor.fetchall()}
 
                 current_emails = set(accounts.keys())
@@ -81,15 +81,16 @@ class AccountSynchronizer:
                 for email, payload in accounts.items():
                     normalised_payload = self._normalise_payload(payload)
                     serialised = self._serialise_payload(normalised_payload)
+                    tags_serialised = self._serialise_tags(normalised_payload.get("tags", []))
                     checksum = self._checksum(serialised)
 
                     if email not in existing:
                         cursor.execute(
                             f"""
-                            INSERT INTO `{self._table_name}` (email, data, checksum, is_deleted, source)
-                            VALUES (%s, %s, %s, 0, %s)
+                            INSERT INTO `{self._table_name}` (email, data, checksum, tags, is_deleted, source)
+                            VALUES (%s, %s, %s, %s, 0, %s)
                             """,
-                            (email, serialised, checksum, source),
+                            (email, serialised, checksum, tags_serialised, source),
                         )
                         added += 1
                         continue
@@ -101,11 +102,12 @@ class AccountSynchronizer:
                             UPDATE `{self._table_name}`
                             SET data = %s,
                                 checksum = %s,
+                                tags = %s,
                                 is_deleted = 0,
                                 source = %s
                             WHERE email = %s
                             """,
-                            (serialised, checksum, source, email),
+                            (serialised, checksum, tags_serialised, source, email),
                         )
                         updated += 1
 
@@ -116,10 +118,11 @@ class AccountSynchronizer:
                         f"""
                         UPDATE `{self._table_name}`
                         SET is_deleted = 1,
+                            tags = %s,
                             source = %s
                         WHERE email = %s
                         """,
-                        (source, email),
+                        (self._serialise_tags([]), source, email),
                     )
                     marked_deleted += 1
 
@@ -151,7 +154,7 @@ class AccountSynchronizer:
         try:
             self._ensure_schema(connection)
             with connection.cursor(DictCursor) as cursor:
-                cursor.execute(f"SELECT email, data, checksum, is_deleted FROM `{self._table_name}`")
+                cursor.execute(f"SELECT email, data, checksum, is_deleted, tags FROM `{self._table_name}`")
                 rows = cursor.fetchall()
         finally:
             connection.close()
@@ -163,6 +166,11 @@ class AccountSynchronizer:
             except json.JSONDecodeError:
                 logger.warning("数据库中的账户 %s 数据非法，跳过", row["email"])
                 continue
+            tags_from_column = self._deserialise_tags(row.get("tags"))
+            if tags_from_column:
+                payload["tags"] = tags_from_column
+            elif "tags" not in payload:
+                payload["tags"] = []
             remote_accounts[row["email"]] = {
                 "data": self._normalise_payload(payload),
                 "checksum": row["checksum"],
@@ -244,12 +252,21 @@ class AccountSynchronizer:
                     `email` VARCHAR(255) NOT NULL PRIMARY KEY,
                     `data` LONGTEXT NOT NULL,
                     `checksum` CHAR(64) NOT NULL,
+                    `tags` LONGTEXT,
                     `is_deleted` TINYINT(1) NOT NULL DEFAULT 0,
                     `source` VARCHAR(32) NOT NULL DEFAULT 'unknown',
                     `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """
             )
+            cursor.execute(f"SHOW COLUMNS FROM `{self._table_name}` LIKE 'tags'")
+            has_tags_column = cursor.fetchone()
+            if not has_tags_column:
+                cursor.execute(f"ALTER TABLE `{self._table_name}` ADD COLUMN `tags` LONGTEXT")
+                cursor.execute(
+                    f"UPDATE `{self._table_name}` SET `tags` = %s WHERE `tags` IS NULL",
+                    (self._serialise_tags([]),),
+                )
         connection.commit()
         self._schema_ready = True
 
@@ -258,15 +275,55 @@ class AccountSynchronizer:
         if payload is None:
             return {}
         normalised = dict(payload)
-        if "tags" in normalised:
+        if "tags" not in normalised or normalised["tags"] is None:
+            normalised["tags"] = []
+        else:
             tags = normalised["tags"]
             if isinstance(tags, list):
-                normalised["tags"] = tags
-            elif tags is None:
-                normalised["tags"] = []
+                cleaned_tags: list[str] = []
+                for tag in tags:
+                    if tag is None:
+                        continue
+                    tag_text = str(tag).strip()
+                    if not tag_text:
+                        continue
+                    cleaned_tags.append(tag_text)
+                normalised["tags"] = cleaned_tags
             else:
-                normalised["tags"] = [str(tags)]
+                tag_text = str(tags).strip()
+                normalised["tags"] = [tag_text] if tag_text else []
         return normalised
+
+    @staticmethod
+    def _serialise_tags(tags: object) -> str:
+        if isinstance(tags, list):
+            cleaned = [str(tag).strip() for tag in tags if str(tag).strip()]
+        elif tags is None:
+            cleaned = []
+        else:
+            cleaned = [str(tags).strip()] if str(tags).strip() else []
+        return json.dumps(cleaned, ensure_ascii=False, sort_keys=True)
+
+    @staticmethod
+    def _deserialise_tags(raw: object) -> list[str]:
+        if raw is None or raw == "":
+            return []
+        if isinstance(raw, list):
+            return [str(tag).strip() for tag in raw if str(tag).strip()]
+        if isinstance(raw, (bytes, bytearray)):
+            try:
+                raw = raw.decode("utf-8")
+            except Exception:  # noqa: BLE001
+                return []
+        if isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                parsed = raw.split(",") if raw else []
+            if isinstance(parsed, list):
+                return [str(tag).strip() for tag in parsed if str(tag).strip()]
+            return [raw.strip()] if raw.strip() else []
+        return []
 
     @staticmethod
     def _serialise_payload(payload: Dict[str, object]) -> str:
