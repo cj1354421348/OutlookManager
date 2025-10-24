@@ -762,6 +762,26 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
         </div>
     </div>
 
+    <!-- 备注编辑模态框 -->
+    <div id="noteModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 520px;">
+            <div class="modal-header">
+                <h3>编辑账户备注</h3>
+                <button class="modal-close" onclick="closeNoteModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="noteTextarea" class="form-label">备注信息</label>
+                    <textarea id="noteTextarea" class="form-input form-textarea" rows="6" placeholder="输入备注内容，支持多行"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeNoteModal()">取消</button>
+                <button class="btn btn-primary" onclick="saveAccountNote()">保存</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 右键菜单 -->
     <div id="contextMenu" class="context-menu">
         <div class="context-menu-item" onclick="openInNewTab()">

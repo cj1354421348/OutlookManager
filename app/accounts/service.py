@@ -10,6 +10,7 @@ from app.models import (
     AccountInfo,
     AccountListResponse,
     AccountResponse,
+    UpdateNoteRequest,
     UpdateTagsRequest,
 )
 from app.oauth import fetch_access_token
@@ -49,6 +50,7 @@ class AccountService:
                     client_id=info.get("client_id", ""),
                     status=status,
                     tags=info.get("tags", []),
+                    note=info.get("note"),
                 )
             )
 
@@ -69,6 +71,21 @@ class AccountService:
     def update_tags(self, email_id: str, request: UpdateTagsRequest) -> AccountResponse:
         credentials = self.get_credentials(email_id)
         return update_account_tags(self._repository, credentials, email_id, request)
+
+    def update_note(self, email_id: str, request: UpdateNoteRequest) -> AccountResponse:
+        accounts = self._repository.read_all()
+        if email_id not in accounts:
+            raise HTTPException(status_code=404, detail="Account not found")
+
+        existing = dict(accounts[email_id])
+        note = request.note.strip() if request.note is not None else None
+        if note:
+            existing["note"] = note
+        else:
+            existing.pop("note", None)
+
+        self._repository.save_account(email_id, existing)
+        return AccountResponse(email_id=email_id, message="Account note updated successfully.")
 
     def delete_account(self, email_id: str) -> AccountResponse:
         self._repository.delete_account(email_id)

@@ -3,7 +3,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 
 from app.accounts import account_service
-from app.models import AccountCredentials, AccountListResponse, AccountResponse, SyncResult, UpdateTagsRequest
+from app.models import (
+    AccountCredentials,
+    AccountListResponse,
+    AccountResponse,
+    SyncResult,
+    UpdateNoteRequest,
+    UpdateTagsRequest,
+)
 from app.security import require_api_key
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
@@ -35,6 +42,15 @@ async def update_account_tags(
     _: None = Depends(require_api_key),
 ) -> AccountResponse:
     return account_service.update_tags(email_id, request)
+
+
+@router.put("/{email_id}/note", response_model=AccountResponse)
+async def update_account_note(
+    email_id: str,
+    request: UpdateNoteRequest,
+    _: None = Depends(require_api_key),
+) -> AccountResponse:
+    return account_service.update_note(email_id, request)
 
 
 @router.delete("/{email_id}", response_model=AccountResponse)

@@ -1,5 +1,6 @@
 window.currentEditAccount = null;
 window.currentEditTags = [];
+window.currentNoteAccount = null;
 
 function clearAddAccountForm() {
     const emailInput = document.getElementById('email');
@@ -16,6 +17,15 @@ function clearAddAccountForm() {
 function clearBatchForm() {
     const batchInput = document.getElementById('batchAccounts');
     if (batchInput) batchInput.value = '';
+}
+
+function escapeHtml(text) {
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 function validateBatchFormat() {
@@ -115,6 +125,18 @@ function createAccountItem(account) {
         ? `<div class="account-tags">${tags.map((tag) => `<span class="account-tag">${tag}</span>`).join('')}</div>`
         : '';
     const tagsPayload = JSON.stringify(tags).replace(/"/g, '&quot;');
+    const notePayload = JSON.stringify(account.note ?? null).replace(/"/g, '&quot;');
+    let notePreview = '';
+    if (typeof account.note === 'string' && account.note.trim()) {
+        const normalisedNote = account.note.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+        const previewSource = normalisedNote.replace(/\s+/g, ' ').trim();
+        const maxPreviewLength = 80;
+        const truncated = previewSource.length > maxPreviewLength
+            ? `${previewSource.slice(0, maxPreviewLength).trimEnd()}…`
+            : previewSource;
+        const titleAttr = escapeHtml(normalisedNote).replace(/\n/g, '&#10;');
+        notePreview = `<p class="account-note" title="${titleAttr}">${escapeHtml(truncated)}</p>`;
+    }
 
     return `
         <div class="account-item" onclick="viewAccountEmails('${safeEmail}')" oncontextmenu="showAccountContextMenu(event, '${safeEmail}')">
@@ -124,6 +146,7 @@ function createAccountItem(account) {
                     <h4>${safeEmail}</h4>
                     <p>状态: ${account.status === 'active' ? '正常' : '异常'}</p>
                     ${tagsHtml}
+                    ${notePreview}
                 </div>
             </div>
             <div class="account-actions" onclick="event.stopPropagation()">
@@ -134,6 +157,10 @@ function createAccountItem(account) {
                 <button class="btn btn-secondary btn-sm" onclick="editAccountTags('${safeEmail}', ${tagsPayload})">
                     <span>🏷️</span>
                     管理标签
+                </button>
+                <button class="btn btn-secondary btn-sm" onclick="editAccountNote('${safeEmail}', ${notePayload})">
+                    <span>📝</span>
+                    备注
                 </button>
                 <button class="btn btn-danger btn-sm" onclick="deleteAccount('${safeEmail}')">
                     <span>🗑️</span>
@@ -544,6 +571,58 @@ function closeTagsModal() {
     window.currentEditTags = [];
 }
 
+function editAccountNote(emailId, note) {
+    window.currentNoteAccount = emailId;
+    const modal = document.getElementById('noteModal');
+    const textarea = document.getElementById('noteTextarea');
+    const title = document.querySelector('#noteModal .modal-header h3');
+
+    if (title) {
+        title.textContent = `编辑 ${emailId} 的备注`;
+    }
+
+    if (textarea) {
+        textarea.value = typeof note === 'string' ? note : '';
+    }
+
+    if (modal) {
+        modal.style.display = 'flex';
+    }
+}
+
+function closeNoteModal() {
+    const modal = document.getElementById('noteModal');
+    if (modal) modal.style.display = 'none';
+    const textarea = document.getElementById('noteTextarea');
+    if (textarea) textarea.value = '';
+    window.currentNoteAccount = null;
+}
+
+async function saveAccountNote() {
+    if (!window.currentNoteAccount) {
+        closeNoteModal();
+        return;
+    }
+
+    const textarea = document.getElementById('noteTextarea');
+    const rawValue = textarea ? textarea.value.replace(/\r\n/g, '\n') : '';
+    const payload = {
+        note: rawValue.trim() ? rawValue : null,
+    };
+
+    try {
+        const response = await apiRequest(`/accounts/${window.currentNoteAccount}/note`, {
+            method: 'PUT',
+            body: JSON.stringify(payload),
+        });
+        showNotification(response?.message || '备注更新成功', 'success');
+        closeNoteModal();
+        loadAccounts(window.accountsCurrentPage);
+    } catch (error) {
+        showNotification(`备注更新失败: ${error.message}`, 'error');
+    }
+}
+
 async function saveAccountTags() {
     if (!window.currentEditAccount) {
         closeTagsModal();
@@ -663,3 +742,6 @@ window.copyAccountLink = copyAccountLink;
 window.contextEditTags = contextEditTags;
 window.contextDeleteAccount = contextDeleteAccount;
 window.changePage = changePage;
+window.editAccountNote = editAccountNote;
+window.closeNoteModal = closeNoteModal;
+window.saveAccountNote = saveAccountNote;

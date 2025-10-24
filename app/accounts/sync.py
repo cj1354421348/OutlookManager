@@ -74,7 +74,7 @@ class AccountSynchronizer:
             self._ensure_schema(connection)
 
             with connection.cursor(DictCursor) as cursor:
-                cursor.execute(f"SELECT email, checksum, is_deleted, tags FROM `{self._table_name}`")
+                cursor.execute(f"SELECT email, checksum, is_deleted, tags, note FROM `{self._table_name}`")
                 existing = {row["email"]: row for row in cursor.fetchall()}
 
             normalised_accounts, tags_target = self._prepare_tags_snapshot(accounts)
@@ -89,29 +89,32 @@ class AccountSynchronizer:
                     checksum = self._checksum(serialised)
 
                     if email not in existing:
+                        note_value = normalised_payload.get("note")
                         cursor.execute(
                             f"""
-                            INSERT INTO `{self._table_name}` (email, data, checksum, tags, is_deleted, source)
-                            VALUES (%s, %s, %s, %s, 0, %s)
+                            INSERT INTO `{self._table_name}` (email, data, checksum, tags, note, is_deleted, source)
+                            VALUES (%s, %s, %s, %s, %s, 0, %s)
                             """,
-                            (email, serialised, checksum, tags_serialised, source),
+                            (email, serialised, checksum, tags_serialised, note_value, source),
                         )
                         added += 1
                         continue
 
                     row = existing[email]
                     if row["checksum"] != checksum or row["is_deleted"]:
+                        note_value = normalised_payload.get("note")
                         cursor.execute(
                             f"""
                             UPDATE `{self._table_name}`
                             SET data = %s,
                                 checksum = %s,
                                 tags = %s,
+                                note = %s,
                                 is_deleted = 0,
                                 source = %s
                             WHERE email = %s
                             """,
-                            (serialised, checksum, tags_serialised, source, email),
+                            (serialised, checksum, tags_serialised, note_value, source, email),
                         )
                         updated += 1
 
@@ -123,6 +126,7 @@ class AccountSynchronizer:
                         UPDATE `{self._table_name}`
                         SET is_deleted = 1,
                             tags = %s,
+                                note = NULL,
                             source = %s
                         WHERE email = %s
                         """,
@@ -167,7 +171,7 @@ class AccountSynchronizer:
         try:
             self._ensure_schema(connection)
             with connection.cursor(DictCursor) as cursor:
-                cursor.execute(f"SELECT email, data, checksum, is_deleted, tags FROM `{self._table_name}`")
+                cursor.execute(f"SELECT email, data, checksum, is_deleted, tags, note FROM `{self._table_name}`")
                 rows = cursor.fetchall()
             tags_map = self._fetch_existing_tags(connection, [row["email"] for row in rows])
         finally:
@@ -187,6 +191,9 @@ class AccountSynchronizer:
             elif "tags" not in payload:
                 payload["tags"] = []
             normalised_payload = self._normalise_payload(payload)
+            note_from_column = self._normalise_note_value(row.get("note"))
+            if note_from_column is not None:
+                normalised_payload["note"] = note_from_column
             combined_checksum = self._checksum(self._serialise_payload(normalised_payload)) or row["checksum"]
             remote_accounts[row["email"]] = {
                 "data": normalised_payload,
@@ -239,7 +246,13 @@ class AccountSynchronizer:
                 continue
 
             if self._conflict_strategy == "prefer_local":
-                if self._merge_tags_from_remote(merged[email], remote_payload):
+                local_entry = merged[email]
+                has_changes = False
+                if self._merge_tags_from_remote(local_entry, remote_payload):
+                    has_changes = True
+                if self._merge_note_from_remote(local_entry, remote_payload):
+                    has_changes = True
+                if has_changes:
                     updated += 1
                     changed = True
                 else:
@@ -274,6 +287,7 @@ class AccountSynchronizer:
                     `data` LONGTEXT NOT NULL,
                     `checksum` CHAR(64) NOT NULL,
                     `tags` LONGTEXT,
+                    `note` LONGTEXT,
                     `is_deleted` TINYINT(1) NOT NULL DEFAULT 0,
                     `source` VARCHAR(32) NOT NULL DEFAULT 'unknown',
                     `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -288,6 +302,12 @@ class AccountSynchronizer:
                     f"UPDATE `{self._table_name}` SET `tags` = %s WHERE `tags` IS NULL",
                     (self._serialise_tags([]),),
                 )
+            cursor.execute(f"SHOW COLUMNS FROM `{self._table_name}` LIKE 'note'")
+            has_note_column = cursor.fetchone()
+            note_column_added = False
+            if not has_note_column:
+                cursor.execute(f"ALTER TABLE `{self._table_name}` ADD COLUMN `note` LONGTEXT")
+                note_column_added = True
             cursor.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS `{self._tags_table}` (
@@ -322,6 +342,27 @@ class AccountSynchronizer:
                     )
         connection.commit()
         self._schema_ready = True
+
+        if note_column_added:
+            with connection.cursor(DictCursor) as cursor:
+                cursor.execute(f"SELECT email, data FROM `{self._table_name}`")
+                rows = cursor.fetchall()
+                for row in rows:
+                    email = row.get("email")
+                    data_raw = row.get("data")
+                    if not email or not data_raw:
+                        continue
+                    try:
+                        payload = json.loads(data_raw)
+                    except json.JSONDecodeError:
+                        continue
+                    note_value = self._normalise_note_value(payload.get("note"))
+                    if note_value:
+                        cursor.execute(
+                            f"UPDATE `{self._table_name}` SET `note` = %s WHERE email = %s",
+                            (note_value, email),
+                        )
+            connection.commit()
 
     def _prepare_tags_snapshot(
         self,
@@ -420,8 +461,18 @@ class AccountSynchronizer:
         local_payload["tags"] = normalised_remote
         return True
 
-    @staticmethod
-    def _normalise_payload(payload: Dict[str, object] | None) -> Dict[str, object]:
+    def _merge_note_from_remote(self, local_payload: Dict[str, object], remote_payload: Dict[str, object]) -> bool:
+        remote_note = self._normalise_note_value(remote_payload.get("note"))
+        local_note = self._normalise_note_value(local_payload.get("note"))
+        if local_note == remote_note:
+            return False
+        if remote_note is None:
+            local_payload.pop("note", None)
+        else:
+            local_payload["note"] = remote_note
+        return True
+
+    def _normalise_payload(self, payload: Dict[str, object] | None) -> Dict[str, object]:
         if payload is None:
             return {}
         normalised = dict(payload)
@@ -442,7 +493,23 @@ class AccountSynchronizer:
             else:
                 tag_text = str(tags).strip()
                 normalised["tags"] = [tag_text] if tag_text else []
+
+        if "note" in normalised:
+            note_value = self._normalise_note_value(normalised.get("note"))
+            if note_value is None:
+                normalised.pop("note", None)
+            else:
+                normalised["note"] = note_value
+
         return normalised
+
+    @staticmethod
+    def _normalise_note_value(value: object) -> str | None:
+        if value is None:
+            return None
+        text = str(value).replace("\r\n", "\n").replace("\r", "\n")
+        stripped = text.strip()
+        return stripped if stripped else None
 
     @staticmethod
     def _serialise_tags(tags: object) -> str:

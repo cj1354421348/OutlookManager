@@ -84,6 +84,7 @@ class AccountInfo(BaseModel):
     client_id: str
     status: str = "active"
     tags: List[str] = []
+    note: Optional[str] = None
 
 
 class AccountListResponse(BaseModel):
@@ -96,6 +97,10 @@ class AccountListResponse(BaseModel):
 
 class UpdateTagsRequest(BaseModel):
     tags: List[str]
+
+
+class UpdateNoteRequest(BaseModel):
+    note: Optional[str] = None
 
 
 class SyncResult(BaseModel):
