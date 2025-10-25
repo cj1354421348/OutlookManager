@@ -9,11 +9,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 ACCOUNTS_FILE = "accounts.json"
 SECURITY_FILE = "security.json"
 
-ACCOUNTS_DB_HOST = os.getenv("ACCOUNTS_DB_HOST")
-ACCOUNTS_DB_PORT = int(os.getenv("ACCOUNTS_DB_PORT", "3306"))
-ACCOUNTS_DB_USER = os.getenv("ACCOUNTS_DB_USER")
-ACCOUNTS_DB_PASSWORD = os.getenv("ACCOUNTS_DB_PASSWORD")
-ACCOUNTS_DB_NAME = os.getenv("ACCOUNTS_DB_NAME")
+# 数据库配置 - 使用默认值，连接到外部PostgreSQL数据库
+ACCOUNTS_DB_HOST = os.getenv("ACCOUNTS_DB_HOST", "localhost")
+ACCOUNTS_DB_PORT = int(os.getenv("ACCOUNTS_DB_PORT", "5432"))
+ACCOUNTS_DB_USER = os.getenv("ACCOUNTS_DB_USER", "outlook_user")
+ACCOUNTS_DB_PASSWORD = os.getenv("ACCOUNTS_DB_PASSWORD", "secure_password")
+ACCOUNTS_DB_NAME = os.getenv("ACCOUNTS_DB_NAME", "outlook_db")
+
+# 完整的数据库连接URL（可选，如果提供则优先使用）
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
 ACCOUNTS_DB_TABLE = os.getenv("ACCOUNTS_DB_TABLE", "account_backups")
 ACCOUNTS_SYNC_CONFLICT = os.getenv("ACCOUNTS_SYNC_CONFLICT", "prefer_local").lower()
 

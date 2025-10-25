@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Dict, Iterable, Set, Tuple
 
-import pymysql
-from pymysql.cursors import DictCursor
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 from app.config import (
     ACCOUNTS_DB_HOST,
@@ -19,6 +19,7 @@ from app.config import (
     ACCOUNTS_DB_TABLE,
     ACCOUNTS_DB_USER,
     ACCOUNTS_SYNC_CONFLICT,
+    DATABASE_URL,
     logger,
 )
 
@@ -57,6 +58,10 @@ class AccountSynchronizer:
 
     @property
     def is_enabled(self) -> bool:
+        # 如果使用 DATABASE_URL，只需要检查它是否存在
+        if DATABASE_URL:
+            return True
+        # 否则检查所有单独的连接参数
         return all([ACCOUNTS_DB_HOST, ACCOUNTS_DB_USER, ACCOUNTS_DB_PASSWORD, ACCOUNTS_DB_NAME])
 
     @property
@@ -73,8 +78,8 @@ class AccountSynchronizer:
         try:
             self._ensure_schema(connection)
 
-            with connection.cursor(DictCursor) as cursor:
-                cursor.execute(f"SELECT email, checksum, is_deleted, tags, note FROM `{self._table_name}`")
+            with connection.cursor() as cursor:
+                cursor.execute(f"SELECT email, checksum, is_deleted, tags, note FROM \"{self._table_name}\"")
                 existing = {row["email"]: row for row in cursor.fetchall()}
 
             normalised_accounts, tags_target = self._prepare_tags_snapshot(accounts)
@@ -92,8 +97,8 @@ class AccountSynchronizer:
                         note_value = normalised_payload.get("note")
                         cursor.execute(
                             f"""
-                            INSERT INTO `{self._table_name}` (email, data, checksum, tags, note, is_deleted, source)
-                            VALUES (%s, %s, %s, %s, %s, 0, %s)
+                            INSERT INTO "{self._table_name}" (email, data, checksum, tags, note, is_deleted, source)
+                            VALUES (%s, %s, %s, %s, %s, FALSE, %s)
                             """,
                             (email, serialised, checksum, tags_serialised, note_value, source),
                         )
@@ -105,12 +110,12 @@ class AccountSynchronizer:
                         note_value = normalised_payload.get("note")
                         cursor.execute(
                             f"""
-                            UPDATE `{self._table_name}`
+                            UPDATE "{self._table_name}"
                             SET data = %s,
                                 checksum = %s,
                                 tags = %s,
                                 note = %s,
-                                is_deleted = 0,
+                                is_deleted = FALSE,
                                 source = %s
                             WHERE email = %s
                             """,
@@ -123,10 +128,10 @@ class AccountSynchronizer:
                         continue
                     cursor.execute(
                         f"""
-                        UPDATE `{self._table_name}`
-                        SET is_deleted = 1,
+                        UPDATE "{self._table_name}"
+                        SET is_deleted = TRUE,
                             tags = %s,
-                                note = NULL,
+                            note = NULL,
                             source = %s
                         WHERE email = %s
                         """,
@@ -170,8 +175,8 @@ class AccountSynchronizer:
 
         try:
             self._ensure_schema(connection)
-            with connection.cursor(DictCursor) as cursor:
-                cursor.execute(f"SELECT email, data, checksum, is_deleted, tags, note FROM `{self._table_name}`")
+            with connection.cursor() as cursor:
+                cursor.execute(f"SELECT email, data, checksum, is_deleted, tags, note FROM \"{self._table_name}\"")
                 rows = cursor.fetchall()
             tags_map = self._fetch_existing_tags(connection, [row["email"] for row in rows])
         finally:
@@ -275,53 +280,53 @@ class AccountSynchronizer:
             skipped=skipped,
         ), changed
 
-    def _ensure_schema(self, connection: "pymysql.connections.Connection") -> None:
+    def _ensure_schema(self, connection: "psycopg2.extensions.connection") -> None:
         if self._schema_ready:
             return
 
-        with connection.cursor(DictCursor) as cursor:
+        with connection.cursor() as cursor:
             cursor.execute(
                 f"""
-                CREATE TABLE IF NOT EXISTS `{self._table_name}` (
-                    `email` VARCHAR(255) NOT NULL PRIMARY KEY,
-                    `data` LONGTEXT NOT NULL,
-                    `checksum` CHAR(64) NOT NULL,
-                    `tags` LONGTEXT,
-                    `note` LONGTEXT,
-                    `is_deleted` TINYINT(1) NOT NULL DEFAULT 0,
-                    `source` VARCHAR(32) NOT NULL DEFAULT 'unknown',
-                    `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                CREATE TABLE IF NOT EXISTS "{self._table_name}" (
+                    "email" VARCHAR(255) NOT NULL PRIMARY KEY,
+                    "data" TEXT NOT NULL,
+                    "checksum" CHAR(64) NOT NULL,
+                    "tags" TEXT,
+                    "note" TEXT,
+                    "is_deleted" BOOLEAN NOT NULL DEFAULT FALSE,
+                    "source" VARCHAR(32) NOT NULL DEFAULT 'unknown',
+                    "updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
                 """
             )
-            cursor.execute(f"SHOW COLUMNS FROM `{self._table_name}` LIKE 'tags'")
+            cursor.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name='{self._table_name}' AND column_name='tags'")
             has_tags_column = cursor.fetchone()
             if not has_tags_column:
-                cursor.execute(f"ALTER TABLE `{self._table_name}` ADD COLUMN `tags` LONGTEXT")
+                cursor.execute(f"ALTER TABLE \"{self._table_name}\" ADD COLUMN \"tags\" TEXT")
                 cursor.execute(
-                    f"UPDATE `{self._table_name}` SET `tags` = %s WHERE `tags` IS NULL",
+                    f"UPDATE \"{self._table_name}\" SET \"tags\" = %s WHERE \"tags\" IS NULL",
                     (self._serialise_tags([]),),
                 )
-            cursor.execute(f"SHOW COLUMNS FROM `{self._table_name}` LIKE 'note'")
+            cursor.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name='{self._table_name}' AND column_name='note'")
             has_note_column = cursor.fetchone()
             note_column_added = False
             if not has_note_column:
-                cursor.execute(f"ALTER TABLE `{self._table_name}` ADD COLUMN `note` LONGTEXT")
+                cursor.execute(f"ALTER TABLE \"{self._table_name}\" ADD COLUMN \"note\" TEXT")
                 note_column_added = True
             cursor.execute(
                 f"""
-                CREATE TABLE IF NOT EXISTS `{self._tags_table}` (
-                    `email` VARCHAR(255) NOT NULL,
-                    `tag` VARCHAR(255) NOT NULL,
-                    PRIMARY KEY (`email`, `tag`),
-                    KEY `idx_account_tags_email` (`email`)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                CREATE TABLE IF NOT EXISTS "{self._tags_table}" (
+                    "email" VARCHAR(255) NOT NULL,
+                    "tag" VARCHAR(255) NOT NULL,
+                    PRIMARY KEY ("email", "tag")
+                )
                 """
             )
-            cursor.execute(f"SELECT COUNT(*) AS cnt FROM `{self._tags_table}`")
+            cursor.execute(f"CREATE INDEX IF NOT EXISTS \"idx_{self._tags_table}_email\" ON \"{self._tags_table}\" (\"email\")")
+            cursor.execute(f"SELECT COUNT(*) AS cnt FROM \"{self._tags_table}\"")
             tag_count_row = cursor.fetchone() or {"cnt": 0}
             if (tag_count_row.get("cnt") or 0) == 0:
-                cursor.execute(f"SELECT email, tags FROM `{self._table_name}` WHERE tags IS NOT NULL AND tags != ''")
+                cursor.execute(f"SELECT email, tags FROM \"{self._table_name}\" WHERE tags IS NOT NULL AND tags != ''")
                 seed_rows = cursor.fetchall()
                 seed_pairs: list[tuple[str, str]] = []
                 for seed in seed_rows:
@@ -334,9 +339,9 @@ class AccountSynchronizer:
                 for chunk in self._chunked(seed_pairs, 500):
                     cursor.executemany(
                         f"""
-                        INSERT INTO `{self._tags_table}` (email, tag)
+                        INSERT INTO "{self._tags_table}" (email, tag)
                         VALUES (%s, %s)
-                        ON DUPLICATE KEY UPDATE tag = VALUES(tag)
+                        ON CONFLICT (email, tag) DO NOTHING
                         """,
                         chunk,
                     )
@@ -344,8 +349,8 @@ class AccountSynchronizer:
         self._schema_ready = True
 
         if note_column_added:
-            with connection.cursor(DictCursor) as cursor:
-                cursor.execute(f"SELECT email, data FROM `{self._table_name}`")
+            with connection.cursor() as cursor:
+                cursor.execute(f"SELECT email, data FROM \"{self._table_name}\"")
                 rows = cursor.fetchall()
                 for row in rows:
                     email = row.get("email")
@@ -359,7 +364,7 @@ class AccountSynchronizer:
                     note_value = self._normalise_note_value(payload.get("note"))
                     if note_value:
                         cursor.execute(
-                            f"UPDATE `{self._table_name}` SET `note` = %s WHERE email = %s",
+                            f"UPDATE \"{self._table_name}\" SET \"note\" = %s WHERE email = %s",
                             (note_value, email),
                         )
             connection.commit()
@@ -378,7 +383,7 @@ class AccountSynchronizer:
 
     def _fetch_existing_tags(
         self,
-        connection: "pymysql.connections.Connection",
+        connection: "psycopg2.extensions.connection",
         emails: Iterable[str],
     ) -> Dict[str, Set[str]]:
         email_list = [email for email in dict.fromkeys(emails) if email]
@@ -386,11 +391,11 @@ class AccountSynchronizer:
             return {}
 
         tags_map: Dict[str, Set[str]] = {email: set() for email in email_list}
-        with connection.cursor(DictCursor) as cursor:
+        with connection.cursor() as cursor:
             for chunk in self._chunked(email_list, 500):
                 placeholders = ",".join(["%s"] * len(chunk))
                 cursor.execute(
-                    f"SELECT email, tag FROM `{self._tags_table}` WHERE email IN ({placeholders})",
+                    f"SELECT email, tag FROM \"{self._tags_table}\" WHERE email IN ({placeholders})",
                     tuple(chunk),
                 )
                 for row in cursor.fetchall():
@@ -403,7 +408,7 @@ class AccountSynchronizer:
 
     def _apply_tag_mutations(
         self,
-        connection: "pymysql.connections.Connection",
+        connection: "psycopg2.extensions.connection",
         email: str,
         existing: Set[str] | None,
         target: Set[str] | None,
@@ -422,9 +427,9 @@ class AccountSynchronizer:
                 for chunk in self._chunked(payload, 500):
                     cursor.executemany(
                         f"""
-                        INSERT INTO `{self._tags_table}` (email, tag)
+                        INSERT INTO "{self._tags_table}" (email, tag)
                         VALUES (%s, %s)
-                        ON DUPLICATE KEY UPDATE tag = VALUES(tag)
+                        ON CONFLICT (email, tag) DO NOTHING
                         """,
                         chunk,
                     )
@@ -434,7 +439,7 @@ class AccountSynchronizer:
                 for chunk in self._chunked(to_remove, 500):
                     placeholders = ",".join(["%s"] * len(chunk))
                     cursor.execute(
-                        f"DELETE FROM `{self._tags_table}` WHERE email = %s AND tag IN ({placeholders})",
+                        f"DELETE FROM \"{self._tags_table}\" WHERE email = %s AND tag IN ({placeholders})",
                         (email, *chunk),
                     )
 
@@ -449,7 +454,6 @@ class AccountSynchronizer:
         if batch:
             yield batch
 
-    @staticmethod
     @staticmethod
     def _merge_tags_from_remote(local_payload: Dict[str, object], remote_payload: Dict[str, object]) -> bool:
         remote_tags = remote_payload.get("tags", []) or []
@@ -556,17 +560,25 @@ class AccountSynchronizer:
             data = json.dumps(serialised_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         return sha256(data.encode("utf-8")).hexdigest()
 
-    def _connect(self) -> "pymysql.connections.Connection":
-        return pymysql.connect(
-            host=ACCOUNTS_DB_HOST,
-            port=ACCOUNTS_DB_PORT,
-            user=ACCOUNTS_DB_USER,
-            password=ACCOUNTS_DB_PASSWORD,
-            database=ACCOUNTS_DB_NAME,
-            charset="utf8mb4",
-            autocommit=False,
-            cursorclass=DictCursor,
-        )
+    def _connect(self) -> "psycopg2.extensions.connection":
+        if DATABASE_URL:
+            # 使用完整的 DATABASE_URL 连接字符串
+            return psycopg2.connect(
+                DATABASE_URL,
+                sslmode='require',  # Neon.tech 强制要求 SSL 连接
+                cursor_factory=RealDictCursor,
+            )
+        else:
+            # 使用单独的连接参数（向后兼容）
+            return psycopg2.connect(
+                host=ACCOUNTS_DB_HOST,
+                port=ACCOUNTS_DB_PORT,
+                user=ACCOUNTS_DB_USER,
+                password=ACCOUNTS_DB_PASSWORD,
+                database=ACCOUNTS_DB_NAME,
+                sslmode='require',  # Neon.tech 强制要求 SSL 连接
+                cursor_factory=RealDictCursor,
+            )
 
     def _normalise_conflict_strategy(self, strategy: str | None) -> str:
         if not strategy:

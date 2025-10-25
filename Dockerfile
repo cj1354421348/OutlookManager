@@ -10,12 +10,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# 安装系统依赖（如果需要）
-# RUN apk add --no-cache \
-#     gcc \
-#     musl-dev \
-#     libffi-dev \
-#     openssl-dev
+# 安装系统依赖（PostgreSQL客户端库）
+RUN apk add --no-cache \
+    gcc \
+    musl-dev \
+    libffi-dev \
+    openssl-dev \
+    postgresql-dev
 
 # 复制requirements文件并安装Python依赖
 COPY requirements.txt .
