@@ -53,18 +53,10 @@ echo "   - 端口: $PORT"
 echo "   - 工作进程: $WORKERS"
 echo "   - 数据目录: /app/data"
 
-# 诊断Python环境
-echo "🔍 诊断Python环境:"
-echo "   - Python版本: $(python --version)"
-echo "   - Python路径: $(python -c 'import sys; print(\":\".join(sys.path))')"
-echo "   - 当前用户: $(whoami)"
-echo "   - FastAPI位置: $(python -c 'import fastapi; print(fastapi.__file__)' 2>/dev/null || echo '未找到')"
-
-# 验证关键模块导入
-echo "🔍 验证关键模块导入:"
-python -c "import fastapi; print('✅ FastAPI:', fastapi.__version__)" || echo "❌ FastAPI导入失败"
-python -c "import uvicorn; print('✅ Uvicorn:', uvicorn.__version__)" || echo "❌ Uvicorn导入失败"
-python -c "import httpx; print('✅ HTTPX:', httpx.__version__)" || echo "❌ HTTPX导入失败"
+# 快速验证关键模块
+echo "🔍 验证环境..."
+python -c "import sys; print('Python路径:', ':'.join(sys.path[:3]))" 2>/dev/null || echo "Python路径检查失败"
+python -c "import fastapi, uvicorn; print('✅ 核心模块已加载')" 2>/dev/null || echo "❌ 核心模块加载失败"
 
 # 启动应用
 echo "🚀 启动应用..."
