@@ -65,9 +65,12 @@ async def add_static_cache_headers(request, call_next):
 
 if __name__ == "__main__":
     import uvicorn
+    import os
 
-    HOST = "0.0.0.0"
-    PORT = 8000
+    # 从环境变量读取配置，如果未设置则使用默认值
+    HOST = os.getenv("HOST", "0.0.0.0")
+    PORT = int(os.getenv("PORT", "8000"))
+    WORKERS = int(os.getenv("WORKERS", "1"))
 
     logger.info("Starting Outlook Email Management System on %s:%s", HOST, PORT)
     logger.info("Access the web interface at: http://localhost:%s", PORT)

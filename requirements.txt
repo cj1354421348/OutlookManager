@@ -1,7 +1,18 @@
-fastapi[all]==0.104.1
+# 核心FastAPI依赖，只包含必要组件
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+# HTTP客户端
 httpx==0.25.2
+requests==2.31.0
+# IMAP支持
 aioimaplib==2.0.1
+# 数据验证和序列化
 pydantic[email]==2.5.0
-requests==2.31.0 
+# PostgreSQL数据库
 psycopg2-binary==2.9.7
+# 文件锁定
 filelock==3.15.4
+# JWT认证
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6

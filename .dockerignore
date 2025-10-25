@@ -23,11 +23,23 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+# 确保所有Python缓存文件被排除
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
 
 # 虚拟环境
 venv/
 env/
 ENV/
+.venv/
 
 # IDE相关
 .vscode/
@@ -51,18 +63,28 @@ Thumbs.db
 demo.py
 demo2.py
 emails/
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Docker相关
 Dockerfile
 docker-compose.yml
 .dockerignore
+docker-compose.override.yml
 
 # 文档和说明
 README.md
 Task*.md
+docs/
 
 # 用户数据（将通过数据卷挂载）
 accounts.json
+.env
+*.env
 
 # 其他不需要的文件夹
-4.30caprun-微软注册/ 
+4.30caprun-微软注册/
+scripts/
+.claude/
+.github/
