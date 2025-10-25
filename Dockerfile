@@ -17,8 +17,7 @@ RUN apk add --no-cache \
     gcc \
     musl-dev \
     libffi-dev \
-    openssl-dev \
-    postgresql-dev
+    openssl-dev
 
 # 复制requirements文件并安装Python依赖到构建环境
 COPY requirements.txt .

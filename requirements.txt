@@ -12,7 +12,4 @@ pydantic[email]==2.5.0
 psycopg2-binary==2.9.7
 # 文件锁定
 filelock==3.15.4
-# JWT认证
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
 python-multipart==0.0.6
