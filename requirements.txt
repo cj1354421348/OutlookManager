@@ -1,15 +1,7 @@
-# 核心FastAPI依赖，只包含必要组件
-fastapi==0.104.1
-uvicorn[standard]==0.24.0
-# HTTP客户端
+fastapi[all]==0.104.1
 httpx==0.25.2
-requests==2.31.0
-# IMAP支持
 aioimaplib==2.0.1
-# 数据验证和序列化
 pydantic[email]==2.5.0
-# PostgreSQL数据库
+requests==2.31.0 
 psycopg2-binary==2.9.7
-# 文件锁定
 filelock==3.15.4
-python-multipart==0.0.6
