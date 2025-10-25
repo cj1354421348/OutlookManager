@@ -41,10 +41,20 @@ link_data_file() {
 link_data_file "$ACCOUNTS_DATA_PATH" "$ACCOUNTS_TARGET" "{}"
 link_data_file "$SECURITY_DATA_PATH" "$SECURITY_TARGET" "{}"
 
-# 确保文件权限正确
-chown appuser:appuser "$DATA_DIR" 2>/dev/null || true
-chown appuser:appuser "$ACCOUNTS_TARGET" 2>/dev/null || true
-chown appuser:appuser "$SECURITY_TARGET" 2>/dev/null || true
+# 确保目录和文件权限正确
+# 首先确保数据目录及其内容的权限
+chown -R appuser:appuser "$DATA_DIR" 2>/dev/null || true
+chmod -R 755 "$DATA_DIR" 2>/dev/null || true
+
+# 确保符号链接目标文件的权限
+chown appuser:appuser "$ACCOUNTS_DATA_PATH" 2>/dev/null || true
+chown appuser:appuser "$SECURITY_DATA_PATH" 2>/dev/null || true
+chmod 644 "$ACCOUNTS_DATA_PATH" 2>/dev/null || true
+chmod 644 "$SECURITY_DATA_PATH" 2>/dev/null || true
+
+# 确保符号链接本身的权限
+chown -h appuser:appuser "$ACCOUNTS_TARGET" 2>/dev/null || true
+chown -h appuser:appuser "$SECURITY_TARGET" 2>/dev/null || true
 
 echo "🚀 启动Outlook邮件API服务..."
 echo "📋 配置信息:"

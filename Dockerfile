@@ -61,14 +61,19 @@ COPY docker-entrypoint.sh .
 RUN chmod +x docker-entrypoint.sh
 
 # 创建数据目录用于持久化存储
-RUN mkdir -p /app/data && chown 777 /app/data
+RUN mkdir -p /app/data && \
+    chown appuser:appgroup /app/data && \
+    chmod 755 /app/data
 
 # 创建非root用户
 RUN addgroup -g 1000 -S appgroup && \
     adduser -u 1000 -S appuser -G appgroup && \
     # 确保appuser对Python包目录有读权限
     chown -R appuser:appgroup /usr/local/lib/python3.11/site-packages && \
-    chown -R appuser:appgroup /usr/local/bin
+    chown -R appuser:appgroup /usr/local/bin && \
+    # 确保appuser对应用目录有写权限
+    chown -R appuser:appgroup /app && \
+    chmod -R 755 /app
 
 # 切换到非root用户前验证权限
 RUN ls -la /usr/local/lib/python3.11/site-packages/fastapi* && \
