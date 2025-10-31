@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Dict, List
 
 from fastapi import HTTPException
@@ -50,12 +51,31 @@ def fetch_email_list(
 
         email_items: List[EmailItem] = []
 
+        uid_pattern = re.compile(r"(\d+)\s+\(UID\s+(\d+)")
+
         for folder_name, ids in grouped.items():
             try:
                 imap_client.select(f'"{folder_name}"', readonly=True)
                 if not ids:
                     continue
                 sequence = b",".join(ids)
+                uid_lookup: Dict[bytes, str] = {}
+                status, uid_data = imap_client.fetch(sequence, "(UID)")
+                if status == "OK" and uid_data:
+                    for entry in uid_data:
+                        header_text = None
+                        if isinstance(entry, tuple):
+                            header_text = entry[0]
+                        elif isinstance(entry, (bytes, bytearray)):
+                            header_text = entry
+                        if not header_text:
+                            continue
+                        if isinstance(header_text, (bytes, bytearray)):
+                            header_text = header_text.decode(errors="ignore")
+                        match = uid_pattern.search(header_text or "")
+                        if match:
+                            seq_num = match.group(1).encode()
+                            uid_lookup[seq_num] = match.group(2)
                 status, msg_data = imap_client.fetch(
                     sequence,
                     "(FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT DATE FROM MESSAGE-ID)])",
@@ -63,13 +83,13 @@ def fetch_email_list(
                 if status != "OK":
                     continue
                 parsed_messages = parse_headers(msg_data)
-                email_items.extend(build_email_items(folder_name, parsed_messages))
+                email_items.extend(build_email_items(folder_name, parsed_messages, uid_lookup))
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed to fetch bulk emails from %s: %s", folder_name, exc)
 
         email_items.sort(key=lambda item: item.date, reverse=True)
 
-        return EmailListResponse(
+        response = EmailListResponse(
             email_id=credentials.email,
             folder_view=folder,
             page=page,
@@ -77,6 +97,7 @@ def fetch_email_list(
             total_emails=total_emails,
             emails=email_items,
         )
+        return response
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001

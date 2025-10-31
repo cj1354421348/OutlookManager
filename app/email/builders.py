@@ -24,8 +24,13 @@ def parse_headers(msg_data: List[Tuple[bytes, bytes]]) -> Dict[bytes, bytes]:
     return parsed
 
 
-def build_email_items(folder_name: str, messages: Dict[bytes, bytes]) -> List[EmailItem]:
+def build_email_items(
+    folder_name: str,
+    messages: Dict[bytes, bytes],
+    uid_lookup: Dict[bytes, str] | None = None,
+) -> List[EmailItem]:
     items: List[EmailItem] = []
+    uid_lookup = uid_lookup or {}
     for msg_id, header_data in messages.items():
         msg = email.message_from_bytes(header_data)
         subject = decode_header_value(msg.get("Subject", "(No Subject)"))
@@ -34,6 +39,7 @@ def build_email_items(folder_name: str, messages: Dict[bytes, bytes]) -> List[Em
         formatted_date = format_date(date_str)
         message_id = f"{folder_name}-{msg_id.decode()}"
         sender_initial = extract_sender_initial(from_email)
+        uid_value = uid_lookup.get(msg_id)
         items.append(
             EmailItem(
                 message_id=message_id,
@@ -44,6 +50,7 @@ def build_email_items(folder_name: str, messages: Dict[bytes, bytes]) -> List[Em
                 is_read=False,
                 has_attachments=False,
                 sender_initial=sender_initial,
+                uid=uid_value,
             )
         )
     return items

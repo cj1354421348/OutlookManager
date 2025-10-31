@@ -31,6 +31,7 @@ class EmailItem(BaseModel):
     is_read: bool = False
     has_attachments: bool = False
     sender_initial: str = "?"
+    uid: Optional[str] = None
 
     class Config:
         json_schema_extra = {
@@ -54,6 +55,7 @@ class EmailListResponse(BaseModel):
     page_size: int
     total_emails: int
     emails: List[EmailItem]
+    from_cache: bool = False
 
 
 class DualViewEmailResponse(BaseModel):
@@ -72,6 +74,8 @@ class EmailDetailsResponse(BaseModel):
     date: str
     body_plain: Optional[str] = None
     body_html: Optional[str] = None
+    uid: Optional[str] = None
+    from_cache: bool = False
 
 
 class AccountResponse(BaseModel):

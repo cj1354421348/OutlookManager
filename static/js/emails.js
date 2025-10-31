@@ -46,6 +46,10 @@ async function loadEmails(forceRefresh = false) {
         const url = `/emails/${window.currentAccount}?folder=${window.currentEmailFolder}&page=${window.currentEmailPage}&page_size=100${refreshParam}`;
         const data = await apiRequest(url);
 
+        if (data && data.from_cache) {
+            showNotification('上游网络错误', 'warning');
+        }
+
         window.allEmails = data.emails || [];
         updateEmailStats(window.allEmails);
         applyFilters();
@@ -220,6 +224,10 @@ async function showEmailDetail(messageId) {
 
     try {
         const data = await apiRequest(`/emails/${window.currentAccount}/${messageId}`);
+
+        if (data && data.from_cache) {
+            showNotification('上游网络错误', 'warning');
+        }
 
         title.textContent = data.subject || '(无主题)';
         content.innerHTML = `

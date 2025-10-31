@@ -21,6 +21,8 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 ACCOUNTS_DB_TABLE = os.getenv("ACCOUNTS_DB_TABLE", "account_backups")
 ACCOUNTS_SYNC_CONFLICT = os.getenv("ACCOUNTS_SYNC_CONFLICT", "prefer_local").lower()
+EMAIL_LIST_CACHE_TABLE = os.getenv("EMAIL_LIST_CACHE_TABLE", "email_list_cache")
+EMAIL_DETAIL_CACHE_TABLE = os.getenv("EMAIL_DETAIL_CACHE_TABLE", "email_detail_cache")
 
 TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
 OAUTH_SCOPE = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
