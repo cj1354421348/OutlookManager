@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Callable, Dict, List, Optional
 
 from fastapi import HTTPException
 
@@ -23,13 +24,28 @@ from .sync_ops import pull_accounts_from_database, push_accounts_to_database
 from .tagging import update_account_tags
 
 
+TOKEN_FAILURE_THRESHOLD = 8
+TOKEN_FAILURE_WINDOW = timedelta(hours=12)
+
+
 class AccountService:
     def __init__(self, repository: AccountRepository, synchronizer: AccountSynchronizer | None = None) -> None:
         self._repository = repository
         self._synchronizer = synchronizer
 
-    def get_credentials(self, email_id: str) -> AccountCredentials:
-        return get_account_credentials(self._repository, email_id)
+    def get_credentials(self, email_id: str, *, require_active: bool = False) -> AccountCredentials:
+        accounts = self._repository.read_all()
+        if email_id not in accounts:
+            logger.warning("Account %s not found in accounts file", email_id)
+            raise HTTPException(status_code=404, detail=f"Account {email_id} not found")
+
+        account_info = accounts[email_id]
+        if require_active:
+            status = account_info.get("status", "active")
+            if status == "expired":
+                raise HTTPException(status_code=409, detail="账户授权已过期，请重新验证")
+
+        return get_account_credentials(self._repository, email_id, accounts=accounts)
 
     def list_accounts(
         self,
@@ -41,7 +57,7 @@ class AccountService:
         accounts_data = self._repository.read_all()
         all_accounts: List[AccountInfo] = []
         for email_id, info in accounts_data.items():
-            status = "active"
+            status = info.get("status") or "active"
             if not info.get("refresh_token") or not info.get("client_id"):
                 status = "invalid"
             all_accounts.append(
@@ -63,9 +79,11 @@ class AccountService:
             "refresh_token": credentials.refresh_token,
             "client_id": credentials.client_id,
             "tags": credentials.tags or [],
+            "status": "active",
         }
         self._repository.save_account(credentials.email, payload)
         logger.info("Account credentials saved for %s", credentials.email)
+        self.record_token_success(credentials.email)
         return AccountResponse(email_id=credentials.email, message="Account verified and saved successfully.")
 
     def update_tags(self, email_id: str, request: UpdateTagsRequest) -> AccountResponse:
@@ -103,6 +121,91 @@ class AccountService:
         if not self._synchronizer or not self._synchronizer.is_enabled:
             raise HTTPException(status_code=503, detail="账户数据库同步未配置")
         return self._synchronizer
+
+    def record_token_failure(self, email_id: str, *, status_code: int | None = None) -> None:
+        status_marked_expired = False
+
+        def mutate(entry: Dict[str, object]) -> bool:
+            nonlocal status_marked_expired
+            now = datetime.now(timezone.utc)
+            now_str = now.isoformat()
+
+            failures = dict(entry.get("token_failures") or {})
+
+            first_ts = failures.get("first_failure_at")
+            first_dt = self._parse_timestamp(first_ts)
+            if not first_dt:
+                first_dt = now
+                failures["first_failure_at"] = now_str
+
+            failures["last_failure_at"] = now_str
+            failures["count"] = int(failures.get("count", 0)) + 1
+            if status_code is not None:
+                failures["last_status_code"] = status_code
+
+            entry["token_failures"] = failures
+
+            if (
+                failures["count"] >= TOKEN_FAILURE_THRESHOLD
+                and now - first_dt >= TOKEN_FAILURE_WINDOW
+                and entry.get("status") != "expired"
+            ):
+                entry["status"] = "expired"
+                entry["status_updated_at"] = now_str
+                entry["status_reason"] = "token_expired"
+                status_marked_expired = True
+
+            return True
+
+        self._update_account_entry(email_id, mutate)
+
+        if status_marked_expired:
+            logger.warning("Account %s marked as expired due to repeated token failures", email_id)
+
+    def record_token_success(self, email_id: str) -> None:
+        def mutate(entry: Dict[str, object]) -> bool:
+            now = datetime.now(timezone.utc)
+            now_str = now.isoformat()
+            updated = False
+
+            if entry.get("token_failures"):
+                entry.pop("token_failures", None)
+                updated = True
+
+            if entry.get("status") == "expired":
+                entry["status"] = "active"
+                entry["status_updated_at"] = now_str
+                if entry.get("status_reason") == "token_expired":
+                    entry.pop("status_reason", None)
+                updated = True
+
+            return updated
+
+        self._update_account_entry(email_id, mutate)
+
+    def _update_account_entry(self, email_id: str, mutator: Callable[[Dict[str, object]], bool]) -> None:
+        accounts = self._repository.read_all()
+        if email_id not in accounts:
+            logger.warning("Account %s not found when attempting to update state", email_id)
+            return
+
+        current = dict(accounts[email_id])
+        if not mutator(current):
+            return
+
+        self._repository.save_account(email_id, current)
+
+    @staticmethod
+    def _parse_timestamp(value: object) -> datetime | None:
+        if not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed
 
 
 synchronizer = AccountSynchronizer()

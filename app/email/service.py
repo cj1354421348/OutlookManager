@@ -4,6 +4,7 @@ import asyncio
 
 from fastapi import HTTPException
 
+from app.accounts import account_service
 from app.models import AccountCredentials, EmailDetailsResponse, EmailListResponse
 from app.oauth import fetch_access_token
 
@@ -30,7 +31,14 @@ class EmailService:
         if cached:
             return cached
 
-        access_token = await fetch_access_token(credentials)
+        try:
+            access_token = await fetch_access_token(credentials)
+        except HTTPException as exc:
+            if exc.status_code in {401}:
+                account_service.record_token_failure(credentials.email, status_code=exc.status_code)
+            raise
+
+        account_service.record_token_success(credentials.email)
 
         def _sync_list() -> EmailListResponse:
             result = fetch_email_list(
@@ -51,7 +59,14 @@ class EmailService:
         except ValueError as exc:  # noqa: B904
             raise HTTPException(status_code=400, detail="Invalid message_id format") from exc
 
-        access_token = await fetch_access_token(credentials)
+        try:
+            access_token = await fetch_access_token(credentials)
+        except HTTPException as exc:
+            if exc.status_code in {401}:
+                account_service.record_token_failure(credentials.email, status_code=exc.status_code)
+            raise
+
+        account_service.record_token_success(credentials.email)
 
         def _sync_detail() -> EmailDetailsResponse:
             return fetch_email_detail(

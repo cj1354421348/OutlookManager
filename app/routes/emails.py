@@ -19,7 +19,7 @@ async def get_emails(
     refresh: bool = Query(False, description="强制刷新缓存"),
     _: None = Depends(require_api_key),
 ) -> EmailListResponse:
-    credentials = account_service.get_credentials(email_id)
+    credentials = account_service.get_credentials(email_id, require_active=True)
     return await email_service.list_emails(credentials, folder, page, page_size, refresh)
 
 
@@ -31,7 +31,7 @@ async def get_dual_view_emails(
     page_size: int = Query(20, ge=1, le=100),
     _: None = Depends(require_api_key),
 ) -> DualViewEmailResponse:
-    credentials = account_service.get_credentials(email_id)
+    credentials = account_service.get_credentials(email_id, require_active=True)
     inbox_response = await email_service.list_emails(credentials, "inbox", inbox_page, page_size)
     junk_response = await email_service.list_emails(credentials, "junk", junk_page, page_size)
     return DualViewEmailResponse(
@@ -49,5 +49,5 @@ async def get_email_detail(
     message_id: str,
     _: None = Depends(require_api_key),
 ) -> EmailDetailsResponse:
-    credentials = account_service.get_credentials(email_id)
+    credentials = account_service.get_credentials(email_id, require_active=True)
     return await email_service.get_email_details(credentials, message_id)

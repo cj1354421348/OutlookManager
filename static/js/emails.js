@@ -1,4 +1,14 @@
 function viewAccountEmails(emailId) {
+    const targetAccount = (window.accounts || []).find((acc) => acc.email_id === emailId);
+    if (targetAccount && targetAccount.status === 'expired') {
+        if (typeof window.showExpiredAccountNotice === 'function') {
+            window.showExpiredAccountNotice(emailId);
+        } else {
+            showNotification(`邮箱 ${emailId} 授权已过期，请先重新验证凭据`, 'warning');
+        }
+        return;
+    }
+
     window.currentAccount = emailId;
     const emailLabel = document.getElementById('currentAccountEmail');
     const emailsNav = document.getElementById('emailsNav');
@@ -51,10 +61,18 @@ async function loadEmails(forceRefresh = false) {
             showNotification('邮件列表已刷新', 'success');
         }
     } catch (error) {
-        if (emailsList) {
-            emailsList.innerHTML = `<div class="error">❌ 加载失败: ${error.message}</div>`;
+        if (error && typeof error.message === 'string' && error.message.includes('账户授权已过期')) {
+            if (emailsList) {
+                emailsList.innerHTML = '<div class="error">邮箱授权已过期，请返回账户列表重新验证</div>';
+            }
+            showNotification('邮箱授权已过期，请重新验证凭据', 'warning');
+            setTimeout(() => backToAccounts(), 400);
+        } else {
+            if (emailsList) {
+                emailsList.innerHTML = `<div class="error">❌ 加载失败: ${error.message}</div>`;
+            }
+            showNotification(`加载邮件失败: ${error.message}`, 'error');
         }
-        showNotification(`加载邮件失败: ${error.message}`, 'error');
     } finally {
         if (refreshBtn) {
             refreshBtn.disabled = false;

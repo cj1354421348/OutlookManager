@@ -2,6 +2,12 @@ window.currentEditAccount = null;
 window.currentEditTags = [];
 window.currentNoteAccount = null;
 
+const ACCOUNT_STATUS_META = {
+    active: { label: '正常', badgeClass: 'status-badge status-active' },
+    invalid: { label: '配置缺失', badgeClass: 'status-badge status-invalid' },
+    expired: { label: '授权过期', badgeClass: 'status-badge status-expired' },
+};
+
 function clearAddAccountForm() {
     const emailInput = document.getElementById('email');
     const refreshInput = document.getElementById('refreshToken');
@@ -126,6 +132,14 @@ function createAccountItem(account) {
         : '';
     const tagsPayload = JSON.stringify(tags).replace(/"/g, '&quot;');
     const notePayload = JSON.stringify(account.note ?? null).replace(/"/g, '&quot;');
+    const statusInfo = ACCOUNT_STATUS_META[account.status] || ACCOUNT_STATUS_META.active;
+    const isExpired = account.status === 'expired';
+    const statusBadge = `<span class="${statusInfo.badgeClass}">${statusInfo.label}</span>`;
+    const itemClasses = `account-item${isExpired ? ' account-item-expired' : ''}`;
+    const viewButtonAction = isExpired
+        ? `showExpiredAccountNotice('${safeEmail}')`
+        : `viewAccountEmails('${safeEmail}')`;
+    const viewButtonContent = isExpired ? '<span>⚠️</span> 授权过期' : '<span>📧</span> 查看邮件';
     let notePreview = '';
     if (typeof account.note === 'string' && account.note.trim()) {
         const normalisedNote = account.note.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -139,20 +153,19 @@ function createAccountItem(account) {
     }
 
     return `
-        <div class="account-item" onclick="viewAccountEmails('${safeEmail}')" oncontextmenu="showAccountContextMenu(event, '${safeEmail}')">
+        <div class="${itemClasses}" onclick="${viewButtonAction}" oncontextmenu="showAccountContextMenu(event, '${safeEmail}')">
             <div class="account-info">
                 <div class="account-avatar">${safeEmail.charAt(0).toUpperCase()}</div>
                 <div class="account-details">
                     <h4>${safeEmail}</h4>
-                    <p>状态: ${account.status === 'active' ? '正常' : '异常'}</p>
+                    <p class="account-status">状态: ${statusBadge}</p>
                     ${tagsHtml}
                     ${notePreview}
                 </div>
             </div>
             <div class="account-actions" onclick="event.stopPropagation()">
-                <button class="btn btn-primary btn-sm" onclick="viewAccountEmails('${safeEmail}')">
-                    <span>📧</span>
-                    查看邮件
+                <button class="btn btn-primary btn-sm" onclick="${viewButtonAction}">
+                    ${viewButtonContent}
                 </button>
                 <button class="btn btn-secondary btn-sm" onclick="editAccountTags('${safeEmail}', ${tagsPayload})">
                     <span>🏷️</span>
@@ -687,6 +700,11 @@ function openInNewTab() {
     hideContextMenu();
 }
 
+function showExpiredAccountNotice(emailId) {
+    const label = emailId || '该账户';
+    showNotification(`邮箱 ${label} 授权已过期，请重新验证凭据`, 'warning');
+}
+
 function copyAccountLink() {
     if (!window.contextMenuTarget) return;
     const url = `${window.location.origin}/#/emails/${encodeURIComponent(window.contextMenuTarget)}`;
@@ -745,3 +763,4 @@ window.changePage = changePage;
 window.editAccountNote = editAccountNote;
 window.closeNoteModal = closeNoteModal;
 window.saveAccountNote = saveAccountNote;
+window.showExpiredAccountNotice = showExpiredAccountNotice;
