@@ -51,6 +51,13 @@ class SecurityService:
     def delete_api_key(self) -> None:
         delete_api_key(self.api_key_store)
 
+    def is_token_health_enabled(self) -> bool:
+        return self.api_key_store.token_health_enabled()
+
+    def set_token_health_enabled(self, enabled: bool) -> bool:
+        self.api_key_store.set_token_health_enabled(enabled)
+        return enabled
+
 
 security_service = SecurityService()
 

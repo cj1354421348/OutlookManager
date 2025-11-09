@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -14,6 +14,7 @@ class SecurityState:
     api_key_plain: Optional[str] = None
     api_key_hash: Optional[str] = None
     updated_at: Optional[str] = None
+    token_health_enabled: bool = True
 
 
 class ApiKeyStore:
@@ -33,6 +34,7 @@ class ApiKeyStore:
                 api_key_plain=data.get("api_key_plain"),
                 api_key_hash=data.get("api_key_hash"),
                 updated_at=data.get("updated_at"),
+                token_health_enabled=bool(data.get("token_health_enabled", True)),
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to load security configuration: %s", exc)
@@ -61,6 +63,15 @@ class ApiKeyStore:
 
     def clear(self) -> None:
         self.update(None, None, None)
+
+    def token_health_enabled(self) -> bool:
+        with self._lock:
+            return bool(self._state.token_health_enabled)
+
+    def set_token_health_enabled(self, enabled: bool) -> None:
+        with self._lock:
+            self._state.token_health_enabled = bool(enabled)
+            self._persist()
 
 
 __all__ = ["ApiKeyStore", "SecurityState"]

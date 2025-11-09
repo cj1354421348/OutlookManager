@@ -1,3 +1,5 @@
+window.tokenHealthEnabled = true;
+
 async function loadApiKey() {
     try {
         const data = await apiRequest('/auth/api-key', { skipApiKey: true, useSession: true });
@@ -131,7 +133,53 @@ function updateSecurityStatsDisplay() {
 }
 
 async function refreshSecurityInfo() {
-    await Promise.all([loadApiKey(), loadSecurityStats()]);
+    await Promise.all([loadApiKey(), loadSecurityStats(), loadTokenHealthSettings()]);
+}
+
+async function loadTokenHealthSettings() {
+    try {
+        const data = await apiRequest('/auth/token-health', { skipApiKey: true, useSession: true });
+        window.tokenHealthEnabled = !!(data && data.enabled);
+        updateTokenHealthToggle();
+    } catch (error) {
+        showNotification(`获取巡检配置失败: ${error.message}`, 'error');
+    }
+}
+
+function updateTokenHealthToggle() {
+    const toggleButton = document.getElementById('tokenHealthToggle');
+    const statusLabel = document.getElementById('tokenHealthStatus');
+    if (!toggleButton || !statusLabel) {
+        return;
+    }
+
+    toggleButton.classList.remove('btn-primary', 'btn-secondary');
+    if (window.tokenHealthEnabled) {
+        toggleButton.classList.add('btn-primary');
+        toggleButton.innerHTML = '<span>🟢</span> 自动巡检已开启';
+        statusLabel.textContent = '系统会在每天自动校验所有账户令牌。';
+    } else {
+        toggleButton.classList.add('btn-secondary');
+        toggleButton.innerHTML = '<span>⚪</span> 自动巡检已关闭';
+        statusLabel.textContent = '后台巡检已暂停，令牌仅在手动请求时校验。';
+    }
+}
+
+async function toggleTokenHealth() {
+    const nextEnabled = !window.tokenHealthEnabled;
+    try {
+        const data = await apiRequest('/auth/token-health', {
+            method: 'POST',
+            body: JSON.stringify({ enabled: nextEnabled }),
+            skipApiKey: true,
+            useSession: true,
+        });
+        window.tokenHealthEnabled = !!(data && data.enabled);
+        updateTokenHealthToggle();
+        showNotification(window.tokenHealthEnabled ? '已开启自动巡检' : '已关闭自动巡检', 'success');
+    } catch (error) {
+        showNotification(`更新巡检设置失败: ${error.message}`, 'error');
+    }
 }
 
 window.loadApiKey = loadApiKey;
@@ -143,3 +191,6 @@ window.copyApiKey = copyApiKey;
 window.loadSecurityStats = loadSecurityStats;
 window.updateSecurityStatsDisplay = updateSecurityStatsDisplay;
 window.refreshSecurityInfo = refreshSecurityInfo;
+window.loadTokenHealthSettings = loadTokenHealthSettings;
+window.updateTokenHealthToggle = updateTokenHealthToggle;
+window.toggleTokenHealth = toggleTokenHealth;

@@ -123,3 +123,7 @@ class LoginRequest(BaseModel):
 
 class ApiKeyRequest(BaseModel):
     api_key: Optional[str] = None
+
+
+class TokenHealthSettings(BaseModel):
+    enabled: bool = True

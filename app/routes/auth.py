@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
 from app.config import SESSION_COOKIE_NAME, SESSION_COOKIE_SAMESITE, SESSION_COOKIE_SECURE
-from app.models import ApiKeyRequest, LoginRequest
+from app.models import ApiKeyRequest, LoginRequest, TokenHealthSettings
 from app.security import require_session, security_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -65,3 +65,17 @@ async def set_api_key(
 async def delete_api_key(session: Dict[str, float] = Depends(require_session)) -> Dict[str, None]:
     security_service.delete_api_key()
     return {"api_key": None}
+
+
+@router.get("/token-health", response_model=TokenHealthSettings)
+async def get_token_health_settings(session: Dict[str, float] = Depends(require_session)) -> TokenHealthSettings:
+    return TokenHealthSettings(enabled=security_service.is_token_health_enabled())
+
+
+@router.post("/token-health", response_model=TokenHealthSettings)
+async def set_token_health_settings(
+    payload: TokenHealthSettings,
+    session: Dict[str, float] = Depends(require_session),
+) -> TokenHealthSettings:
+    enabled = security_service.set_token_health_enabled(payload.enabled)
+    return TokenHealthSettings(enabled=enabled)

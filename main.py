@@ -12,19 +12,30 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.accounts.service import account_repository
 from app.config import MAX_CONNECTIONS, logger
+from app.core.token_health import TokenHealthScheduler, TokenHealthService
 from app.infrastructure.imap import imap_pool
 from app.routes import routers
+from app.security import security_service
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting Outlook Email Management System...")
     logger.info("IMAP connection pool initialized with max_connections=%s", MAX_CONNECTIONS)
+    token_health_service = TokenHealthService(account_repository)
+    token_health_scheduler = TokenHealthScheduler(
+        token_health_service,
+        security_service.is_token_health_enabled,
+    )
+    token_health_scheduler.start()
     try:
         yield
     finally:
         logger.info("Shutting down Outlook Email Management System...")
+        logger.info("Stopping token health scheduler...")
+        await token_health_scheduler.stop()
         logger.info("Closing IMAP connection pool...")
         imap_pool.close_all_connections()
         logger.info("Application shutdown complete.")

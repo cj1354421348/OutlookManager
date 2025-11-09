@@ -576,6 +576,22 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                             </button>
                         </div>
 
+                        <div class="form-group">
+                            <label class="form-label">令牌巡检任务</label>
+                            <div class="flex items-center" style="gap: 12px;">
+                                <button id="tokenHealthToggle" class="btn btn-primary" onclick="toggleTokenHealth()">
+                                    <span>🟢</span>
+                                    自动巡检已开启
+                                </button>
+                                <span id="tokenHealthStatus" class="text-sm" style="color: #64748b;">
+                                    系统会在每天自动校验所有账户令牌。
+                                </span>
+                            </div>
+                            <p class="text-sm" style="color: #64748b; margin-top: 8px;">
+                                后台每24小时触发一次上游请求，若令牌连续失败将按原规则自动拉黑账户。可在此暂停/恢复巡检。
+                            </p>
+                        </div>
+
                         <div class="card" style="background: #f8fafc; border-color: #e2e8f0; margin-top: 24px;">
                             <h4 style="margin-bottom: 12px; color: #1e293b;">安全统计</h4>
                             <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
