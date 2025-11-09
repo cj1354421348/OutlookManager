@@ -127,3 +127,4 @@ class ApiKeyRequest(BaseModel):
 
 class TokenHealthSettings(BaseModel):
     enabled: bool = True
+    interval_minutes: int = Field(default=1440, ge=60, le=10080)

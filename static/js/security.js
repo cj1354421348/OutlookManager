@@ -1,4 +1,11 @@
 window.tokenHealthEnabled = true;
+window.tokenHealthInterval = 1440;
+window.tokenHealthStatus = {
+    running: false,
+    last_started_at: null,
+    last_completed_at: null,
+    last_result: null,
+};
 
 async function loadApiKey() {
     try {
@@ -134,13 +141,16 @@ function updateSecurityStatsDisplay() {
 
 async function refreshSecurityInfo() {
     await Promise.all([loadApiKey(), loadSecurityStats(), loadTokenHealthSettings()]);
+    await loadTokenHealthStatus();
 }
 
 async function loadTokenHealthSettings() {
     try {
         const data = await apiRequest('/auth/token-health', { skipApiKey: true, useSession: true });
         window.tokenHealthEnabled = !!(data && data.enabled);
+        window.tokenHealthInterval = (data && data.interval_minutes) || 1440;
         updateTokenHealthToggle();
+        updateTokenHealthInterval();
     } catch (error) {
         showNotification(`获取巡检配置失败: ${error.message}`, 'error');
     }
@@ -157,7 +167,7 @@ function updateTokenHealthToggle() {
     if (window.tokenHealthEnabled) {
         toggleButton.classList.add('btn-primary');
         toggleButton.innerHTML = '<span>🟢</span> 自动巡检已开启';
-        statusLabel.textContent = '系统会在每天自动校验所有账户令牌。';
+        statusLabel.textContent = '系统会按设定间隔自动校验所有账户令牌。';
     } else {
         toggleButton.classList.add('btn-secondary');
         toggleButton.innerHTML = '<span>⚪</span> 自动巡检已关闭';
@@ -170,15 +180,96 @@ async function toggleTokenHealth() {
     try {
         const data = await apiRequest('/auth/token-health', {
             method: 'POST',
-            body: JSON.stringify({ enabled: nextEnabled }),
+            body: JSON.stringify({ enabled: nextEnabled, interval_minutes: window.tokenHealthInterval }),
             skipApiKey: true,
             useSession: true,
         });
         window.tokenHealthEnabled = !!(data && data.enabled);
+        window.tokenHealthInterval = (data && data.interval_minutes) || window.tokenHealthInterval;
         updateTokenHealthToggle();
+        updateTokenHealthInterval();
         showNotification(window.tokenHealthEnabled ? '已开启自动巡检' : '已关闭自动巡检', 'success');
     } catch (error) {
         showNotification(`更新巡检设置失败: ${error.message}`, 'error');
+    }
+}
+
+function updateTokenHealthInterval() {
+    const intervalInput = document.getElementById('tokenHealthInterval');
+    if (intervalInput) {
+        intervalInput.value = window.tokenHealthInterval;
+    }
+}
+
+async function saveTokenHealthInterval() {
+    const intervalInput = document.getElementById('tokenHealthInterval');
+    if (!intervalInput) return;
+    const value = parseInt(intervalInput.value, 10);
+    if (Number.isNaN(value) || value < 60 || value > 10080) {
+        showNotification('间隔需在 60-10080 分钟之间', 'warning');
+        intervalInput.value = window.tokenHealthInterval;
+        return;
+    }
+    try {
+        const data = await apiRequest('/auth/token-health', {
+            method: 'POST',
+            body: JSON.stringify({ enabled: window.tokenHealthEnabled, interval_minutes: value }),
+            skipApiKey: true,
+            useSession: true,
+        });
+        window.tokenHealthEnabled = !!(data && data.enabled);
+        window.tokenHealthInterval = data.interval_minutes || value;
+        updateTokenHealthToggle();
+        updateTokenHealthInterval();
+        showNotification('巡检间隔已更新', 'success');
+    } catch (error) {
+        showNotification(`更新巡检间隔失败: ${error.message}`, 'error');
+        intervalInput.value = window.tokenHealthInterval;
+    }
+}
+
+async function loadTokenHealthStatus() {
+    try {
+        const data = await apiRequest('/auth/token-health/status', { skipApiKey: true, useSession: true });
+        window.tokenHealthStatus = data || window.tokenHealthStatus;
+        updateTokenHealthStatus();
+    } catch (error) {
+        showNotification(`获取巡检状态失败: ${error.message}`, 'error');
+    }
+}
+
+function updateTokenHealthStatus() {
+    const statusBadge = document.getElementById('tokenHealthRunStatus');
+    const lastRunLabel = document.getElementById('tokenHealthLastRun');
+    const resultLabel = document.getElementById('tokenHealthLastResult');
+    if (!statusBadge || !lastRunLabel || !resultLabel) {
+        return;
+    }
+
+    const fmt = (ts) => (ts ? new Date(ts * 1000).toLocaleString() : '无记录');
+    statusBadge.textContent = window.tokenHealthStatus.running ? '运行中' : '空闲';
+    statusBadge.className = window.tokenHealthStatus.running ? 'status-badge active' : 'status-badge idle';
+    lastRunLabel.textContent = fmt(window.tokenHealthStatus.last_completed_at);
+
+    const result = window.tokenHealthStatus.last_result;
+    if (result) {
+        resultLabel.textContent = `总计 ${result.total}，成功 ${result.success}，失败 ${result.failures}，新拉黑 ${result.newly_expired}`;
+    } else {
+        resultLabel.textContent = '暂无执行记录';
+    }
+}
+
+async function triggerTokenHealthRun() {
+    try {
+        await apiRequest('/auth/token-health/run-now', {
+            method: 'POST',
+            skipApiKey: true,
+            useSession: true,
+        });
+        showNotification('已触发巡检任务', 'success');
+        await loadTokenHealthStatus();
+    } catch (error) {
+        showNotification(`触发巡检失败: ${error.message}`, 'error');
     }
 }
 
@@ -194,3 +285,8 @@ window.refreshSecurityInfo = refreshSecurityInfo;
 window.loadTokenHealthSettings = loadTokenHealthSettings;
 window.updateTokenHealthToggle = updateTokenHealthToggle;
 window.toggleTokenHealth = toggleTokenHealth;
+window.updateTokenHealthInterval = updateTokenHealthInterval;
+window.saveTokenHealthInterval = saveTokenHealthInterval;
+window.loadTokenHealthStatus = loadTokenHealthStatus;
+window.updateTokenHealthStatus = updateTokenHealthStatus;
+window.triggerTokenHealthRun = triggerTokenHealthRun;

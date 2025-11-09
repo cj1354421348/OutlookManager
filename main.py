@@ -21,21 +21,25 @@ from app.security import security_service
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting Outlook Email Management System...")
     logger.info("IMAP connection pool initialized with max_connections=%s", MAX_CONNECTIONS)
     token_health_service = TokenHealthService(account_repository)
     token_health_scheduler = TokenHealthScheduler(
         token_health_service,
         security_service.is_token_health_enabled,
+        security_service.get_token_health_interval,
     )
+    app.state.token_health_scheduler = token_health_scheduler
     token_health_scheduler.start()
     try:
         yield
     finally:
         logger.info("Shutting down Outlook Email Management System...")
         logger.info("Stopping token health scheduler...")
-        await token_health_scheduler.stop()
+        scheduler = getattr(app.state, "token_health_scheduler", None)
+        if scheduler:
+            await scheduler.stop()
         logger.info("Closing IMAP connection pool...")
         imap_pool.close_all_connections()
         logger.info("Application shutdown complete.")

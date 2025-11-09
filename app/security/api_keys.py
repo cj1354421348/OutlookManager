@@ -15,6 +15,7 @@ class SecurityState:
     api_key_hash: Optional[str] = None
     updated_at: Optional[str] = None
     token_health_enabled: bool = True
+    token_health_interval_minutes: int = 1440
 
 
 class ApiKeyStore:
@@ -35,6 +36,7 @@ class ApiKeyStore:
                 api_key_hash=data.get("api_key_hash"),
                 updated_at=data.get("updated_at"),
                 token_health_enabled=bool(data.get("token_health_enabled", True)),
+                token_health_interval_minutes=int(data.get("token_health_interval_minutes", 1440) or 1440),
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to load security configuration: %s", exc)
@@ -72,6 +74,17 @@ class ApiKeyStore:
         with self._lock:
             self._state.token_health_enabled = bool(enabled)
             self._persist()
+
+    def get_token_health_interval(self) -> int:
+        with self._lock:
+            return int(self._state.token_health_interval_minutes or 1440)
+
+    def set_token_health_interval(self, minutes: int) -> int:
+        minutes = max(60, int(minutes or 1440))
+        with self._lock:
+            self._state.token_health_interval_minutes = minutes
+            self._persist()
+            return minutes
 
 
 __all__ = ["ApiKeyStore", "SecurityState"]

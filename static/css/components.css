@@ -85,6 +85,16 @@
     color: #92400e;
 }
 
+.status-badge.active {
+    background: #cffafe;
+    color: #0891b2;
+}
+
+.status-badge.idle {
+    background: #e2e8f0;
+    color: #475569;
+}
+
 .account-item-expired {
     border-color: #f59e0b;
     background: #fffbeb;

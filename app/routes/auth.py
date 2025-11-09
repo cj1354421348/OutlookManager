@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 from app.config import SESSION_COOKIE_NAME, SESSION_COOKIE_SAMESITE, SESSION_COOKIE_SECURE
@@ -68,14 +68,59 @@ async def delete_api_key(session: Dict[str, float] = Depends(require_session)) -
 
 
 @router.get("/token-health", response_model=TokenHealthSettings)
-async def get_token_health_settings(session: Dict[str, float] = Depends(require_session)) -> TokenHealthSettings:
-    return TokenHealthSettings(enabled=security_service.is_token_health_enabled())
+async def get_token_health_settings(request: Request, session: Dict[str, float] = Depends(require_session)) -> TokenHealthSettings:
+    return TokenHealthSettings(
+        enabled=security_service.is_token_health_enabled(),
+        interval_minutes=security_service.get_token_health_interval(),
+    )
 
 
 @router.post("/token-health", response_model=TokenHealthSettings)
 async def set_token_health_settings(
+    request: Request,
     payload: TokenHealthSettings,
     session: Dict[str, float] = Depends(require_session),
 ) -> TokenHealthSettings:
     enabled = security_service.set_token_health_enabled(payload.enabled)
-    return TokenHealthSettings(enabled=enabled)
+    interval = security_service.set_token_health_interval(payload.interval_minutes)
+    scheduler = getattr(request.app.state, "token_health_scheduler", None)
+    if scheduler:
+        scheduler.trigger_immediate()
+    return TokenHealthSettings(enabled=enabled, interval_minutes=interval)
+
+
+@router.post("/token-health/run-now")
+async def trigger_token_health_run(request: Request, session: Dict[str, float] = Depends(require_session)) -> Dict[str, Any]:
+    scheduler = getattr(request.app.state, "token_health_scheduler", None)
+    if not scheduler:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Scheduler not initialized")
+    scheduler.trigger_immediate()
+    status_payload = scheduler.status()
+    return {
+        "message": "Token health check triggered",
+        "running": status_payload.running,
+        "last_started_at": status_payload.last_started_at,
+        "last_completed_at": status_payload.last_completed_at,
+    }
+
+
+@router.get("/token-health/status")
+async def get_token_health_status(request: Request, session: Dict[str, float] = Depends(require_session)) -> Dict[str, Any]:
+    scheduler = getattr(request.app.state, "token_health_scheduler", None)
+    if not scheduler:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Scheduler not initialized")
+    status_payload = scheduler.status()
+    result = status_payload.last_result
+    return {
+        "running": status_payload.running,
+        "last_started_at": status_payload.last_started_at,
+        "last_completed_at": status_payload.last_completed_at,
+        "last_result": {
+            "total": result.total if result else 0,
+            "success": result.success if result else 0,
+            "failures": result.failures if result else 0,
+            "newly_expired": result.newly_expired if result else 0,
+        }
+        if result
+        else None,
+    }

@@ -58,6 +58,12 @@ class SecurityService:
         self.api_key_store.set_token_health_enabled(enabled)
         return enabled
 
+    def get_token_health_interval(self) -> int:
+        return self.api_key_store.get_token_health_interval()
+
+    def set_token_health_interval(self, minutes: int) -> int:
+        return self.api_key_store.set_token_health_interval(minutes)
+
 
 security_service = SecurityService()
 
