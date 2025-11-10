@@ -26,13 +26,19 @@ async def get_access_token(credentials: AccountCredentials) -> str:
             logger.info("Successfully obtained access token for %s", credentials.email)
             return access_token
     except httpx.HTTPStatusError as exc:  # noqa: BLE001
-        logger.error("HTTP %s error getting access token for %s: %s", exc.response.status_code, credentials.email, exc)
+        error_msg = f"HTTP {exc.response.status_code} error getting access token"
+        logger.error("%s for %s: %s", error_msg, credentials.email, exc)
+        
         raise
     except httpx.RequestError as exc:  # noqa: BLE001
-        logger.error("Request error getting access token for %s: %s", credentials.email, exc)
+        error_msg = "Request error getting access token"
+        logger.error("%s for %s: %s", error_msg, credentials.email, exc)
+        
         raise
     except Exception as exc:  # noqa: BLE001
-        logger.error("Unexpected error getting access token for %s: %s", credentials.email, exc)
+        error_msg = "Unexpected error getting access token"
+        logger.error("%s for %s: %s", error_msg, credentials.email, exc)
+        
         raise
 
 

@@ -37,7 +37,8 @@ def fetch_email_list(
                 for msg_id in message_ids:
                     meta.append({"folder": folder_name.encode(), "id": msg_id})
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Failed to access folder %s: %s", folder_name, exc)
+                error_msg = f"Failed to access folder {folder_name}"
+                logger.warning("%s: %s", error_msg, exc)
 
         total_emails = len(meta)
         start = (page - 1) * page_size
@@ -85,7 +86,8 @@ def fetch_email_list(
                 parsed_messages = parse_headers(msg_data)
                 email_items.extend(build_email_items(folder_name, parsed_messages, uid_lookup))
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Failed to fetch bulk emails from %s: %s", folder_name, exc)
+                error_msg = f"Failed to fetch bulk emails from {folder_name}"
+                logger.warning("%s: %s", error_msg, exc)
 
         email_items.sort(key=lambda item: item.date, reverse=True)
 
@@ -101,7 +103,9 @@ def fetch_email_list(
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
-        logger.error("Error listing emails: %s", exc)
+        error_msg = "Error listing emails"
+        logger.error("%s: %s", error_msg, exc)
+        
         raise HTTPException(status_code=500, detail="Failed to retrieve emails")
     finally:
         if imap_client:

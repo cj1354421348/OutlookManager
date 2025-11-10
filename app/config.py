@@ -43,6 +43,10 @@ APP_PASSWORD = os.getenv("APP_PASSWORD", "admin")
 LOCK_THRESHOLD = 5
 LOCK_DURATION_SECONDS = 3600
 
+# 令牌失败阈值配置
+TOKEN_FAILURE_THRESHOLD = int(os.getenv("TOKEN_FAILURE_THRESHOLD", "8"))
+TOKEN_FAILURE_WINDOW_HOURS = int(os.getenv("TOKEN_FAILURE_WINDOW_HOURS", "12"))
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",

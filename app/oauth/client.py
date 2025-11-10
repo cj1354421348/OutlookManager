@@ -27,13 +27,19 @@ async def fetch_access_token(credentials: AccountCredentials) -> str:
             logger.info("Successfully obtained access token for %s", credentials.email)
             return access_token
     except httpx.HTTPStatusError as exc:
-        logger.error("HTTP %s error getting access token for %s: %s", exc.response.status_code, credentials.email, exc)
+        error_msg = f"HTTP {exc.response.status_code} error getting access token"
+        logger.error("%s for %s: %s", error_msg, credentials.email, exc)
+        
         if exc.response.status_code == 400:
             raise HTTPException(status_code=401, detail="Invalid refresh token or client credentials")
         raise HTTPException(status_code=401, detail="Authentication failed")
     except httpx.RequestError as exc:
-        logger.error("Request error getting access token for %s: %s", credentials.email, exc)
+        error_msg = "Request error getting access token"
+        logger.error("%s for %s: %s", error_msg, credentials.email, exc)
+        
         raise HTTPException(status_code=500, detail="Network error during token acquisition")
     except Exception as exc:  # noqa: BLE001
-        logger.error("Unexpected error getting access token for %s: %s", credentials.email, exc)
+        error_msg = "Unexpected error getting access token"
+        logger.error("%s for %s: %s", error_msg, credentials.email, exc)
+        
         raise HTTPException(status_code=500, detail="Token acquisition failed")

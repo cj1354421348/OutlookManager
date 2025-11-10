@@ -26,7 +26,9 @@ class IMAPConnectionPool:
             logger.info("Successfully created IMAP connection for %s", email)
             return client
         except Exception as exc:  # noqa: BLE001
-            logger.error("Failed to create IMAP connection for %s: %s", email, exc)
+            error_msg = f"Failed to create IMAP connection"
+            logger.error("%s for %s: %s", error_msg, email, exc)
+            
             raise
 
     def get_connection(self, email: str, access_token: str) -> imaplib.IMAP4_SSL:

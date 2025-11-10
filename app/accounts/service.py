@@ -5,7 +5,12 @@ from typing import Callable, Dict, List, Optional
 
 from fastapi import HTTPException
 
-from app.config import ACCOUNTS_FILE, logger
+from app.config import (
+    ACCOUNTS_FILE,
+    TOKEN_FAILURE_THRESHOLD,
+    TOKEN_FAILURE_WINDOW_HOURS,
+    logger
+)
 from app.models import (
     AccountCredentials,
     AccountInfo,
@@ -15,6 +20,7 @@ from app.models import (
     UpdateTagsRequest,
 )
 from app.oauth import fetch_access_token
+from app.shared.utils.failure_logger import log_token_failure
 
 from .repository import AccountRepository
 from .sync import AccountSynchronizer, SyncReport
@@ -24,8 +30,8 @@ from .sync_ops import pull_accounts_from_database, push_accounts_to_database
 from .tagging import update_account_tags
 
 
-TOKEN_FAILURE_THRESHOLD = 8
-TOKEN_FAILURE_WINDOW = timedelta(hours=12)
+# 使用配置文件中的阈值设置
+TOKEN_FAILURE_WINDOW = timedelta(hours=TOKEN_FAILURE_WINDOW_HOURS)
 
 
 class AccountService:
@@ -122,11 +128,13 @@ class AccountService:
             raise HTTPException(status_code=503, detail="账户数据库同步未配置")
         return self._synchronizer
 
-    def record_token_failure(self, email_id: str, *, status_code: int | None = None) -> None:
+    def record_token_failure(self, email_id: str, *, status_code: int | None = None, error_message: str | None = None, operation: str = "token_request") -> None:
         status_marked_expired = False
+        failure_count = 0
+        first_failure_at = None
 
         def mutate(entry: Dict[str, object]) -> bool:
-            nonlocal status_marked_expired
+            nonlocal status_marked_expired, failure_count, first_failure_at
             now = datetime.now(timezone.utc)
             now_str = now.isoformat()
 
@@ -142,8 +150,14 @@ class AccountService:
             failures["count"] = int(failures.get("count", 0)) + 1
             if status_code is not None:
                 failures["last_status_code"] = status_code
+            if error_message:
+                failures["last_error_message"] = error_message
 
             entry["token_failures"] = failures
+            
+            # 记录失败信息用于日志
+            failure_count = failures["count"]
+            first_failure_at = first_dt
 
             if (
                 failures["count"] >= TOKEN_FAILURE_THRESHOLD
@@ -158,6 +172,18 @@ class AccountService:
             return True
 
         self._update_account_entry(email_id, mutate)
+
+        # 记录详细的失败日志
+        log_token_failure(
+            email=email_id,
+            failure_count=failure_count,
+            threshold=TOKEN_FAILURE_THRESHOLD,
+            first_failure_at=first_failure_at,
+            window_duration=TOKEN_FAILURE_WINDOW,
+            status_code=status_code,
+            error_message=error_message,
+            operation=operation
+        )
 
         if status_marked_expired:
             logger.warning("Account %s marked as expired due to repeated token failures", email_id)

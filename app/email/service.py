@@ -41,7 +41,12 @@ class EmailService:
             access_token = await fetch_access_token(credentials)
         except HTTPException as exc:
             if exc.status_code in {401}:
-                account_service.record_token_failure(credentials.email, status_code=exc.status_code)
+                account_service.record_token_failure(
+                    credentials.email,
+                    status_code=exc.status_code,
+                    error_message=exc.detail,
+                    operation="email_list_token_request"
+                )
             raise
 
         account_service.record_token_success(credentials.email)
@@ -113,7 +118,12 @@ class EmailService:
             access_token = await fetch_access_token(credentials)
         except HTTPException as exc:
             if exc.status_code in {401}:
-                account_service.record_token_failure(credentials.email, status_code=exc.status_code)
+                account_service.record_token_failure(
+                    credentials.email,
+                    status_code=exc.status_code,
+                    error_message=exc.detail,
+                    operation="email_detail_token_request"
+                )
             raise
 
         account_service.record_token_success(credentials.email)

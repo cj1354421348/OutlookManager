@@ -89,9 +89,29 @@ class AccountSynchronizer:
 
             with connection.cursor() as cursor:
                 for email, normalised_payload in normalised_accounts.items():
+                    # 详细日志：推送前的数据状态
+                    logger.debug("=== 推送账户 %s ===", email)
+                    logger.debug("推送前标准化数据: %s", json.dumps(normalised_payload, indent=2, ensure_ascii=False))
+                    
                     serialised = self._serialise_payload(normalised_payload)
                     tags_serialised = self._serialise_tags(normalised_payload.get("tags", []))
                     checksum = self._checksum(serialised)
+                    
+                    # 详细日志：推送时的序列化和校验和
+                    logger.debug("推送序列化结果: %s", serialised)
+                    logger.debug("推送计算校验和: %s", checksum)
+                    
+                    # 记录状态字段的类型和值变化
+                    if "status" in normalised_payload:
+                        logger.debug("推送状态字段: %s (类型: %s)", normalised_payload.get("status"), type(normalised_payload.get("status")))
+                    if "status_updated_at" in normalised_payload:
+                        logger.debug("推送状态更新时间: %s (类型: %s)", normalised_payload.get("status_updated_at"), type(normalised_payload.get("status_updated_at")))
+                    if "token_failures" in normalised_payload:
+                        token_failures = normalised_payload.get("token_failures")
+                        if isinstance(token_failures, dict) and "count" in token_failures:
+                            logger.debug("推送令牌失败次数: %s (类型: %s, count: %s)", token_failures, type(token_failures), token_failures.get("count"))
+                        else:
+                            logger.debug("推送令牌失败次数: %s (类型: %s)", token_failures, type(token_failures))
 
                     if email not in existing:
                         note_value = normalised_payload.get("note")
@@ -107,6 +127,8 @@ class AccountSynchronizer:
 
                     row = existing[email]
                     if row["checksum"] != checksum or row["is_deleted"]:
+                        logger.debug("更新账户 %s：校验和不同 (本地=%s, 远程=%s) 或已删除 (is_deleted=%s)",
+                                   email, row["checksum"], checksum, row["is_deleted"])
                         note_value = normalised_payload.get("note")
                         cursor.execute(
                             f"""
@@ -122,6 +144,8 @@ class AccountSynchronizer:
                             (serialised, checksum, tags_serialised, note_value, source, email),
                         )
                         updated += 1
+                    else:
+                        logger.debug("跳过账户 %s：校验和相同且未删除 (checksum=%s)", email, checksum)
 
                 for email, row in existing.items():
                     if email in current_emails or row["is_deleted"]:
@@ -189,24 +213,86 @@ class AccountSynchronizer:
             except json.JSONDecodeError:
                 logger.warning("数据库中的账户 %s 数据非法，跳过", row["email"])
                 continue
+                
+            # 详细日志：拉取时的原始数据
+            logger.debug("=== 拉取账户 %s ===", row["email"])
+            logger.debug("从数据库读取原始数据: %s", row["data"])
+            logger.debug("JSON解析后数据: %s", json.dumps(payload, indent=2, ensure_ascii=False))
+            logger.debug("数据库中存储的校验和: %s", row["checksum"])
+            
             stored_tags = sorted(tags_map.get(row["email"], []))
             tags_from_column = stored_tags or self._deserialise_tags(row.get("tags"))
             if tags_from_column:
                 payload["tags"] = tags_from_column
             elif "tags" not in payload:
                 payload["tags"] = []
+                
+            # 详细日志：标准化前的数据
+            logger.debug("标准化前数据: %s", json.dumps(payload, indent=2, ensure_ascii=False))
+            
             normalised_payload = self._normalise_payload(payload)
             note_from_column = self._normalise_note_value(row.get("note"))
             if note_from_column is not None:
                 normalised_payload["note"] = note_from_column
-            combined_checksum = self._checksum(self._serialise_payload(normalised_payload)) or row["checksum"]
+            
+            # 详细日志：标准化后的数据
+            logger.debug("标准化后数据: %s", json.dumps(normalised_payload, indent=2, ensure_ascii=False))
+            
+            # 确保状态字段被正确处理
+            logger.debug("处理账户 %s 的状态字段", row["email"])
+            if "status" in normalised_payload:
+                logger.debug("标准化后状态: %s (类型: %s)", normalised_payload.get("status"), type(normalised_payload.get("status")))
+            if "status_updated_at" in normalised_payload:
+                logger.debug("标准化后状态更新时间: %s (类型: %s)", normalised_payload.get("status_updated_at"), type(normalised_payload.get("status_updated_at")))
+            if "status_reason" in normalised_payload:
+                logger.debug("标准化后状态原因: %s (类型: %s)", normalised_payload.get("status_reason"), type(normalised_payload.get("status_reason")))
+            if "token_failures" in normalised_payload:
+                token_failures = normalised_payload.get("token_failures")
+                if isinstance(token_failures, dict) and "count" in token_failures:
+                    logger.debug("标准化后令牌失败次数: %s (类型: %s, count: %s)", token_failures, type(token_failures), token_failures.get("count"))
+                else:
+                    logger.debug("标准化后令牌失败次数: %s (类型: %s)", token_failures, type(token_failures))
+            
+            serialised_payload = self._serialise_payload(normalised_payload)
+            calculated_checksum = self._checksum(serialised_payload)
+            
+            # 详细日志：记录校验和计算的详细过程
+            logger.debug("账户 %s 序列化数据: %s", row["email"], serialised_payload)
+            logger.debug("账户 %s 序列化数据长度: %d", row["email"], len(serialised_payload))
+            
+            # 如果校验和计算失败，记录错误而不是使用数据库中的校验和
+            if calculated_checksum is None:
+                logger.error("账户 %s 校验和计算失败，使用数据库中的校验和作为备用", row["email"])
+                combined_checksum = row["checksum"]
+            else:
+                combined_checksum = calculated_checksum
+                logger.debug("账户 %s 校验和计算成功: %s", row["email"], calculated_checksum)
+            
+            # 详细日志记录，用于调试跳过原因
+            logger.debug("账户 %s 计算的校验和: %s, 数据库校验和: %s",
+                       row["email"], combined_checksum, row["checksum"])
+            
+            # 记录标准化前后的字段变化
+            if "status" in normalised_payload:
+                logger.debug("拉取标准化后状态字段: %s (类型: %s)", normalised_payload.get("status"), type(normalised_payload.get("status")))
+            if "status_updated_at" in normalised_payload:
+                logger.debug("拉取标准化后状态更新时间: %s (类型: %s)", normalised_payload.get("status_updated_at"), type(normalised_payload.get("status_updated_at")))
+            if "token_failures" in normalised_payload:
+                token_failures = normalised_payload.get("token_failures")
+                if isinstance(token_failures, dict) and "count" in token_failures:
+                    logger.debug("拉取标准化后令牌失败次数: %s (类型: %s, count: %s)", token_failures, type(token_failures), token_failures.get("count"))
+                else:
+                    logger.debug("拉取标准化后令牌失败次数: %s (类型: %s)", token_failures, type(token_failures))
+            
             remote_accounts[row["email"]] = {
                 "data": normalised_payload,
                 "checksum": combined_checksum,
                 "is_deleted": bool(row["is_deleted"]),
             }
 
+        logger.debug("开始合并远程账户数据到本地，远程账户数量: %d", len(remote_accounts))
         merged_accounts, report, changed = self._merge_remote_into_local(local_accounts, remote_accounts)
+        logger.debug("合并完成，报告: %s, 是否有变更: %s", report.message, changed)
         return merged_accounts, report, changed
 
     def _merge_remote_into_local(
@@ -222,20 +308,64 @@ class AccountSynchronizer:
             remote_payload = record["data"]
             remote_checksum = record["checksum"]
             is_deleted = record["is_deleted"]
+            
+            logger.debug("处理账户 %s，远程状态: %s", email, "已删除" if is_deleted else "正常")
+            if "status" in remote_payload:
+                logger.debug("远程账户 %s 状态: %s", email, remote_payload.get("status"))
 
             local_payload = merged.get(email)
-            local_checksum = (
-                self._checksum(self._serialise_payload(self._normalise_payload(local_payload)))
-                if local_payload is not None
-                else None
-            )
+            if local_payload is not None:
+                # 详细日志：本地数据的处理过程
+                logger.debug("=== 账户 %s 本地数据处理 ===", email)
+                logger.debug("本地原始数据: %s", json.dumps(local_payload, indent=2, ensure_ascii=False))
+                
+                normalised_local = self._normalise_payload(local_payload)
+                logger.debug("本地标准化后数据: %s", json.dumps(normalised_local, indent=2, ensure_ascii=False))
+                
+                serialised_local = self._serialise_payload(normalised_local)
+                local_checksum = self._checksum(serialised_local)
+                
+                logger.debug("账户 %s 本地序列化数据: %s", email, serialised_local)
+                logger.debug("账户 %s 本地序列化数据长度: %d", email, len(serialised_local))
+                logger.debug("账户 %s 本地校验和: %s", email, local_checksum)
+                
+                # 详细比较状态字段
+                if "status" in normalised_local:
+                    logger.debug("本地状态: %s (类型: %s)", normalised_local.get("status"), type(normalised_local.get("status")))
+                if "status" in remote_payload:
+                    logger.debug("远程状态: %s (类型: %s)", remote_payload.get("status"), type(remote_payload.get("status")))
+                    
+                # 比较状态更新时间
+                if "status_updated_at" in normalised_local:
+                    logger.debug("本地状态更新时间: %s (类型: %s)", normalised_local.get("status_updated_at"), type(normalised_local.get("status_updated_at")))
+                if "status_updated_at" in remote_payload:
+                    logger.debug("远程状态更新时间: %s (类型: %s)", remote_payload.get("status_updated_at"), type(remote_payload.get("status_updated_at")))
+                    
+                # 比较令牌失败次数
+                if "token_failures" in normalised_local:
+                    local_token_failures = normalised_local.get("token_failures")
+                    if isinstance(local_token_failures, dict) and "count" in local_token_failures:
+                        logger.debug("本地令牌失败次数: %s (类型: %s, count: %s)", local_token_failures, type(local_token_failures), local_token_failures.get("count"))
+                    else:
+                        logger.debug("本地令牌失败次数: %s (类型: %s)", local_token_failures, type(local_token_failures))
+                if "token_failures" in remote_payload:
+                    remote_token_failures = remote_payload.get("token_failures")
+                    if isinstance(remote_token_failures, dict) and "count" in remote_token_failures:
+                        logger.debug("远程令牌失败次数: %s (类型: %s, count: %s)", remote_token_failures, type(remote_token_failures), remote_token_failures.get("count"))
+                    else:
+                        logger.debug("远程令牌失败次数: %s (类型: %s)", remote_token_failures, type(remote_token_failures))
+            else:
+                local_checksum = None
 
             if is_deleted:
                 if email not in merged:
+                    logger.debug("跳过账户 %s：远程已删除但本地不存在", email)
                     continue
                 if self._conflict_strategy == "prefer_local":
+                    logger.debug("跳过账户 %s：远程已删除但策略为 prefer_local", email)
                     skipped += 1
                     continue
+                logger.debug("删除账户 %s：远程已删除且策略为 prefer_remote", email)
                 merged.pop(email)
                 removed += 1
                 changed = True
@@ -248,6 +378,33 @@ class AccountSynchronizer:
                 continue
 
             if local_checksum == remote_checksum:
+                logger.debug("跳过账户 %s：校验和相同 (本地=%s, 远程=%s)", email, local_checksum, remote_checksum)
+                
+                # 即使校验和相同，也检查关键字段是否有差异
+                if local_payload and remote_payload:
+                    if self._has_critical_field_differences(email, local_payload, remote_payload):
+                        logger.warning("账户 %s 检测到关键字段差异，但校验和相同，强制更新", email)
+                        # 强制更新，即使校验和相同
+                        if self._conflict_strategy == "prefer_remote":
+                            merged[email] = remote_payload
+                            updated += 1
+                            changed = True
+                            logger.debug("使用远程数据覆盖本地账户 %s（关键字段差异）", email)
+                        else:
+                            # prefer_local 策略下，合并远程的关键字段
+                            local_entry = merged[email]
+                            has_changes = False
+                            if self._merge_tags_from_remote(local_entry, remote_payload):
+                                has_changes = True
+                            if self._merge_note_from_remote(local_entry, remote_payload):
+                                has_changes = True
+                            if self._merge_status_from_remote(local_entry, remote_payload):
+                                has_changes = True
+                            if has_changes:
+                                updated += 1
+                                changed = True
+                                logger.debug("合并远程关键字段到本地账户 %s", email)
+                
                 continue
 
             if self._conflict_strategy == "prefer_local":
@@ -257,13 +414,20 @@ class AccountSynchronizer:
                     has_changes = True
                 if self._merge_note_from_remote(local_entry, remote_payload):
                     has_changes = True
+                # 添加状态字段合并逻辑
+                if self._merge_status_from_remote(local_entry, remote_payload):
+                    has_changes = True
                 if has_changes:
                     updated += 1
                     changed = True
                 else:
+                    logger.debug("跳过账户 %s：prefer_local 策略下无实质性变更", email)
                     skipped += 1
                 continue
 
+            logger.debug("使用远程数据覆盖本地账户 %s", email)
+            if "status" in remote_payload:
+                logger.debug("覆盖后账户 %s 状态: %s", email, remote_payload.get("status"))
             merged[email] = remote_payload
             updated += 1
             changed = True
@@ -476,10 +640,91 @@ class AccountSynchronizer:
             local_payload["note"] = remote_note
         return True
 
+    def _merge_status_from_remote(self, local_payload: Dict[str, object], remote_payload: Dict[str, object]) -> bool:
+        """合并状态字段，确保状态信息不会丢失"""
+        has_changes = False
+        
+        # 处理 status 字段
+        local_status = local_payload.get("status")
+        remote_status = remote_payload.get("status")
+        if local_status != remote_status:
+            if remote_status is not None:
+                local_payload["status"] = remote_status
+                has_changes = True
+                logger.debug("更新状态字段: %s -> %s", local_status, remote_status)
+        
+        # 处理 status_updated_at 字段
+        local_status_updated_at = local_payload.get("status_updated_at")
+        remote_status_updated_at = remote_payload.get("status_updated_at")
+        if local_status_updated_at != remote_status_updated_at:
+            if remote_status_updated_at is not None:
+                local_payload["status_updated_at"] = remote_status_updated_at
+                has_changes = True
+                logger.debug("更新状态更新时间: %s -> %s", local_status_updated_at, remote_status_updated_at)
+        
+        # 处理 status_reason 字段
+        local_status_reason = local_payload.get("status_reason")
+        remote_status_reason = remote_payload.get("status_reason")
+        if local_status_reason != remote_status_reason:
+            if remote_status_reason is not None:
+                local_payload["status_reason"] = remote_status_reason
+                has_changes = True
+                logger.debug("更新状态原因: %s -> %s", local_status_reason, remote_status_reason)
+        
+        # 处理 token_failures 字段
+        local_token_failures = local_payload.get("token_failures")
+        remote_token_failures = remote_payload.get("token_failures")
+        
+        # 提取本地的 count 值
+        local_count = 0
+        if isinstance(local_token_failures, dict) and "count" in local_token_failures:
+            try:
+                local_count = int(local_token_failures["count"]) if local_token_failures["count"] is not None else 0
+            except (ValueError, TypeError):
+                local_count = 0
+        elif isinstance(local_token_failures, (int, float, str)):
+            try:
+                local_count = int(local_token_failures) if local_token_failures is not None else 0
+            except (ValueError, TypeError):
+                local_count = 0
+        
+        # 提取远程的 count 值
+        remote_count = 0
+        if isinstance(remote_token_failures, dict) and "count" in remote_token_failures:
+            try:
+                remote_count = int(remote_token_failures["count"]) if remote_token_failures["count"] is not None else 0
+            except (ValueError, TypeError):
+                remote_count = 0
+        elif isinstance(remote_token_failures, (int, float, str)):
+            try:
+                remote_count = int(remote_token_failures) if remote_token_failures is not None else 0
+            except (ValueError, TypeError):
+                remote_count = 0
+        
+        # 如果 count 值不同，更新本地 token_failures
+        if local_count != remote_count:
+            # 如果远程是字典格式，直接使用
+            if isinstance(remote_token_failures, dict):
+                local_payload["token_failures"] = remote_token_failures
+            else:
+                # 否则创建新的字典格式
+                local_payload["token_failures"] = {"count": remote_count}
+            has_changes = True
+            logger.debug("更新令牌失败次数: %s -> %s", local_count, remote_count)
+        
+        return has_changes
+
     def _normalise_payload(self, payload: Dict[str, object] | None) -> Dict[str, object]:
         if payload is None:
             return {}
         normalised = dict(payload)
+        
+        # 添加调试日志：记录原始状态字段
+        original_status = normalised.get("status")
+        original_status_updated_at = normalised.get("status_updated_at")
+        original_status_reason = normalised.get("status_reason")
+        original_token_failures = normalised.get("token_failures")
+        
         if "tags" not in normalised or normalised["tags"] is None:
             normalised["tags"] = []
         else:
@@ -504,6 +749,90 @@ class AccountSynchronizer:
                 normalised.pop("note", None)
             else:
                 normalised["note"] = note_value
+
+        # 处理状态字段
+        if "status" in normalised:
+            status_value = normalised.get("status")
+            if status_value is None:
+                normalised.pop("status", None)
+            else:
+                normalised["status"] = str(status_value).strip()
+        
+        if "status_updated_at" in normalised:
+            status_updated_at = normalised.get("status_updated_at")
+            if status_updated_at is None:
+                normalised.pop("status_updated_at", None)
+            else:
+                # 更严格的时间戳处理，确保格式一致性
+                status_str = str(status_updated_at).strip()
+                # 尝试标准化时间戳格式，去除可能的毫秒精度差异
+                if status_str:
+                    # 如果是数字时间戳，转换为字符串
+                    try:
+                        # 尝试解析为浮点数时间戳
+                        timestamp_float = float(status_str)
+                        # 转换为整数秒，确保推送和拉取时格式一致
+                        normalised["status_updated_at"] = str(int(timestamp_float))
+                    except (ValueError, TypeError):
+                        # 如果不是数字，保持原始字符串但去除多余空格
+                        normalised["status_updated_at"] = status_str
+                else:
+                    normalised.pop("status_updated_at", None)
+        
+        if "status_reason" in normalised:
+            status_reason = normalised.get("status_reason")
+            if status_reason is None:
+                normalised.pop("status_reason", None)
+            else:
+                normalised["status_reason"] = str(status_reason).strip()
+        
+        if "token_failures" in normalised:
+            token_failures = normalised.get("token_failures")
+            if token_failures is None:
+                normalised.pop("token_failures", None)
+            else:
+                # token_failures 应该是一个字典对象，包含 count 等字段
+                if isinstance(token_failures, dict):
+                    # 确保字典中的 count 字段是整数
+                    if "count" in token_failures:
+                        try:
+                            count_value = token_failures["count"]
+                            if isinstance(count_value, str):
+                                count_value = count_value.strip()
+                                token_failures["count"] = int(count_value) if count_value else 0
+                            else:
+                                token_failures["count"] = int(count_value) if count_value is not None else 0
+                        except (ValueError, TypeError):
+                            logger.warning("无法解析 token_failures.count 值 %s，设置为 0", count_value)
+                            token_failures["count"] = 0
+                    normalised["token_failures"] = token_failures
+                elif isinstance(token_failures, (int, float, str)):
+                    # 如果是数字或字符串，转换为字典格式
+                    try:
+                        count_value = int(token_failures) if token_failures is not None else 0
+                        normalised["token_failures"] = {"count": count_value}
+                        logger.debug("将 token_failures 从 %s 转换为字典格式: %s", token_failures, normalised["token_failures"])
+                    except (ValueError, TypeError):
+                        logger.warning("无法解析 token_failures 值 %s，设置为字典格式 {\"count\": 0}", token_failures)
+                        normalised["token_failures"] = {"count": 0}
+                else:
+                    # 其他类型，设置为默认字典格式
+                    logger.warning("token_failures 类型不支持 %s，设置为字典格式 {\"count\": 0}", type(token_failures))
+                    normalised["token_failures"] = {"count": 0}
+
+        # 添加调试日志：记录标准化后的状态字段变化
+        if original_status != normalised.get("status"):
+            logger.debug("状态字段标准化: %s -> %s", original_status, normalised.get("status"))
+        if original_status_updated_at != normalised.get("status_updated_at"):
+            logger.debug("状态更新时间标准化: %s -> %s", original_status_updated_at, normalised.get("status_updated_at"))
+        if original_status_reason != normalised.get("status_reason"):
+            logger.debug("状态原因标准化: %s -> %s", original_status_reason, normalised.get("status_reason"))
+        if original_token_failures != normalised.get("token_failures"):
+            new_token_failures = normalised.get("token_failures")
+            if isinstance(new_token_failures, dict) and "count" in new_token_failures:
+                logger.debug("令牌失败次数标准化: %s -> %s (count: %s)", original_token_failures, new_token_failures, new_token_failures.get("count"))
+            else:
+                logger.debug("令牌失败次数标准化: %s -> %s", original_token_failures, new_token_failures)
 
         return normalised
 
@@ -595,6 +924,74 @@ class AccountSynchronizer:
         if table_name:
             logger.warning("非法的表名 %s，已回退为 account_backups", table_name)
         return "account_backups"
+
+    def _has_critical_field_differences(self, email: str, local_payload: Dict[str, object], remote_payload: Dict[str, object]) -> bool:
+        """检查关键字段是否有差异，即使校验和相同"""
+        has_differences = False
+        
+        # 检查状态字段
+        local_status = local_payload.get("status")
+        remote_status = remote_payload.get("status")
+        if local_status != remote_status:
+            logger.debug("账户 %s 状态字段差异：本地=%s, 远程=%s", email, local_status, remote_status)
+            has_differences = True
+        
+        # 检查状态更新时间字段
+        local_status_updated = local_payload.get("status_updated_at")
+        remote_status_updated = remote_payload.get("status_updated_at")
+        if local_status_updated != remote_status_updated:
+            logger.debug("账户 %s 状态更新时间差异：本地=%s, 远程=%s", email, local_status_updated, remote_status_updated)
+            has_differences = True
+        
+        # 检查状态原因字段
+        local_status_reason = local_payload.get("status_reason")
+        remote_status_reason = remote_payload.get("status_reason")
+        if local_status_reason != remote_status_reason:
+            logger.debug("账户 %s 状态原因差异：本地=%s, 远程=%s", email, local_status_reason, remote_status_reason)
+            has_differences = True
+        
+        # 检查令牌失败次数字段
+        local_token_failures = local_payload.get("token_failures")
+        remote_token_failures = remote_payload.get("token_failures")
+        
+        # token_failures 是字典类型，需要比较其中的 count 字段
+        local_count = 0
+        remote_count = 0
+        
+        # 提取本地的 count 值
+        if isinstance(local_token_failures, dict) and "count" in local_token_failures:
+            try:
+                local_count = int(local_token_failures["count"]) if local_token_failures["count"] is not None else 0
+            except (ValueError, TypeError):
+                logger.debug("账户 %s 本地 token_failures.count 值无效: %s", email, local_token_failures["count"])
+                local_count = 0
+        elif isinstance(local_token_failures, (int, float, str)):
+            try:
+                local_count = int(local_token_failures) if local_token_failures is not None else 0
+            except (ValueError, TypeError):
+                logger.debug("账户 %s 本地 token_failures 值无效: %s", email, local_token_failures)
+                local_count = 0
+        
+        # 提取远程的 count 值
+        if isinstance(remote_token_failures, dict) and "count" in remote_token_failures:
+            try:
+                remote_count = int(remote_token_failures["count"]) if remote_token_failures["count"] is not None else 0
+            except (ValueError, TypeError):
+                logger.debug("账户 %s 远程 token_failures.count 值无效: %s", email, remote_token_failures["count"])
+                remote_count = 0
+        elif isinstance(remote_token_failures, (int, float, str)):
+            try:
+                remote_count = int(remote_token_failures) if remote_token_failures is not None else 0
+            except (ValueError, TypeError):
+                logger.debug("账户 %s 远程 token_failures 值无效: %s", email, remote_token_failures)
+                remote_count = 0
+        
+        # 比较 count 值
+        if local_count != remote_count:
+            logger.debug("账户 %s 令牌失败次数差异：本地=%s, 远程=%s", email, local_count, remote_count)
+            has_differences = True
+        
+        return has_differences
 
     @staticmethod
     def _log_async_result(future: Future) -> None:

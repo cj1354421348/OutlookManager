@@ -61,13 +61,22 @@ class TokenHealthService:
                 result.success += 1
             except HTTPException as exc:
                 status_code = exc.status_code
-                account_service.record_token_failure(email, status_code=status_code)
+                account_service.record_token_failure(
+                    email,
+                    status_code=status_code,
+                    error_message=exc.detail,
+                    operation="token_health_check"
+                )
                 if status_code == 401:
                     result.newly_expired += 1
                 result.failures += 1
             except Exception as exc:  # noqa: BLE001
                 logger.error("Unexpected error checking token for %s: %s", email, exc)
-                account_service.record_token_failure(email)
+                account_service.record_token_failure(
+                    email,
+                    error_message=str(exc),
+                    operation="token_health_check"
+                )
                 result.failures += 1
 
         logger.info(

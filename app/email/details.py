@@ -74,7 +74,9 @@ def fetch_email_detail(
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001
-        logger.error("Error getting email details: %s", exc)
+        error_msg = "Error getting email details"
+        logger.error("%s: %s", error_msg, exc)
+        
         raise HTTPException(status_code=500, detail="Failed to retrieve email details")
     finally:
         if imap_client:

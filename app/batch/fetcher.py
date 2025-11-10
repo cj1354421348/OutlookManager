@@ -12,6 +12,7 @@ from .config import logger
 from .imap_pool import IMAPConnectionPool
 from .models import AccountCredentials
 from .oauth import get_access_token
+from app.accounts import account_service
 
 
 def decode_header_value(header_value: str) -> str:
@@ -37,7 +38,16 @@ def decode_header_value(header_value: str) -> str:
 
 
 async def list_emails(imap_pool: IMAPConnectionPool, credentials: AccountCredentials) -> List[Dict[str, object]]:
-    access_token = await get_access_token(credentials)
+    try:
+        access_token = await get_access_token(credentials)
+    except Exception as exc:
+        # 记录令牌获取失败
+        account_service.record_token_failure(
+            credentials.email,
+            error_message=str(exc),
+            operation="batch_email_list_token_request"
+        )
+        raise
     email_items: List[Dict[str, object]] = []
     imap_client: imaplib.IMAP4_SSL | None = None
 
@@ -122,6 +132,14 @@ async def list_emails(imap_pool: IMAPConnectionPool, credentials: AccountCredent
         return email_items
     except Exception as exc:  # noqa: BLE001
         logger.error("Error listing emails for %s: %s", credentials.email, exc)
+        
+        # 记录IMAP操作失败
+        account_service.record_token_failure(
+            credentials.email,
+            error_message=f"IMAP操作失败: {str(exc)}",
+            operation="batch_email_list_imap_operation"
+        )
+        
         try:
             if imap_client and getattr(imap_client, "state", "") != "LOGOUT":
                 await imap_pool.return_connection(credentials.email, imap_client)
