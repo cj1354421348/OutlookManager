@@ -11,6 +11,7 @@ from app.config import (
     TOKEN_FAILURE_WINDOW_HOURS,
     logger
 )
+from app.core.time_utils import now, now_str, TIMEZONE_SHANGHAI
 from app.models import (
     AccountCredentials,
     AccountInfo,
@@ -135,18 +136,18 @@ class AccountService:
 
         def mutate(entry: Dict[str, object]) -> bool:
             nonlocal status_marked_expired, failure_count, first_failure_at
-            now = datetime.now(timezone.utc)
-            now_str = now.isoformat()
+            current_time = now()
+            current_time_str = now_str()
 
             failures = dict(entry.get("token_failures") or {})
 
             first_ts = failures.get("first_failure_at")
             first_dt = self._parse_timestamp(first_ts)
             if not first_dt:
-                first_dt = now
-                failures["first_failure_at"] = now_str
+                first_dt = current_time
+                failures["first_failure_at"] = current_time_str
 
-            failures["last_failure_at"] = now_str
+            failures["last_failure_at"] = current_time_str
             failures["count"] = int(failures.get("count", 0)) + 1
             if status_code is not None:
                 failures["last_status_code"] = status_code
@@ -154,26 +155,6 @@ class AccountService:
                 failures["last_error_message"] = error_message
 
             entry["token_failures"] = failures
-            
-            # 记录失败信息用于日志
-            failure_count = failures["count"]
-            first_failure_at = first_dt
-
-            if (
-                failures["count"] >= TOKEN_FAILURE_THRESHOLD
-                and now - first_dt >= TOKEN_FAILURE_WINDOW
-                and entry.get("status") != "expired"
-            ):
-                entry["status"] = "expired"
-                entry["status_updated_at"] = now_str
-                entry["status_reason"] = "token_expired"
-                status_marked_expired = True
-
-            return True
-
-        self._update_account_entry(email_id, mutate)
-
-        # 记录详细的失败日志
         log_token_failure(
             email=email_id,
             failure_count=failure_count,
@@ -190,8 +171,7 @@ class AccountService:
 
     def record_token_success(self, email_id: str) -> None:
         def mutate(entry: Dict[str, object]) -> bool:
-            now = datetime.now(timezone.utc)
-            now_str = now.isoformat()
+            current_time_str = now_str()
             updated = False
 
             if entry.get("token_failures"):
@@ -200,7 +180,7 @@ class AccountService:
 
             if entry.get("status") == "expired":
                 entry["status"] = "active"
-                entry["status_updated_at"] = now_str
+                entry["status_updated_at"] = current_time_str
                 if entry.get("status_reason") == "token_expired":
                     entry.pop("status_reason", None)
                 updated = True
@@ -230,8 +210,10 @@ class AccountService:
         except ValueError:
             return None
         if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=timezone.utc)
-        return parsed
+            # 如果没有时区信息，默认为东八区
+            return parsed.replace(tzinfo=TIMEZONE_SHANGHAI)
+        # 如果有时区，统一转换到东八区进行比较
+        return parsed.astimezone(TIMEZONE_SHANGHAI)
 
 
 synchronizer = AccountSynchronizer()

@@ -4,6 +4,11 @@ import logging
 import os
 from pathlib import Path
 
+# 强制设置时区为东八区
+os.environ["TZ"] = "Asia/Shanghai"
+if hasattr(os, "tzset"):
+    os.tzset()
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 ACCOUNTS_FILE = "accounts.json"

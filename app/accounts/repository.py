@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from filelock import FileLock
 
 from app.config import logger
+from app.core.time_utils import now_str
 
 from .sync import AccountSynchronizer, SyncReport
 
@@ -42,6 +43,8 @@ class AccountRepository:
     def save_account(self, email_id: str, data: Dict[str, object]) -> None:
         with self._lock:
             accounts = self.read_all()
+            # 自动更新修改时间戳
+            data["last_modified_at"] = now_str()
             accounts[email_id] = data
             self._write_to_disk_locked(accounts)
         self._sync_to_database(accounts, source="mutation")

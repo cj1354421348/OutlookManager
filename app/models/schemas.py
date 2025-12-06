@@ -5,11 +5,50 @@ from typing import List, Optional
 from pydantic import BaseModel, EmailStr, Field
 
 
-class AccountCredentials(BaseModel):
-    email: EmailStr
+class TokenFailureDetails(BaseModel):
+    count: int = 0
+    first_failure_at: Optional[str] = None
+    last_failure_at: Optional[str] = None
+    last_status_code: Optional[int] = None
+    last_error_message: Optional[str] = None
+
+
+class AccountSchema(BaseModel):
+    """
+    对应 accounts.json 中的完整账户条目结构
+    """
     refresh_token: str
     client_id: str
-    tags: Optional[List[str]] = Field(default=[])
+    
+    tags: List[str] = Field(default_factory=list)
+    note: Optional[str] = None
+    
+    status: str = "active"
+    status_updated_at: Optional[str] = None
+    status_reason: Optional[str] = None
+    
+    token_failures: Optional[TokenFailureDetails] = None
+    
+    last_modified_at: Optional[str] = None
+    updated_at: Optional[str] = None  # 兼容字段
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "refresh_token": "M.C550...",
+                "client_id": "9e5f94bc...",
+                "tags": ["work"],
+                "status": "expired",
+                "last_modified_at": "2025-12-06T13:00:00+08:00"
+            }
+        }
+
+
+class AccountCredentials(AccountSchema):
+    """
+    扩展 AccountSchema 以包含 email 字段，主要用于 API 请求
+    """
+    email: EmailStr
 
     class Config:
         json_schema_extra = {
@@ -89,6 +128,7 @@ class AccountInfo(BaseModel):
     status: str = "active"
     tags: List[str] = []
     note: Optional[str] = None
+    # 可以在这里添加更多字段用于前端展示，如 token_failures
 
 
 class AccountListResponse(BaseModel):
