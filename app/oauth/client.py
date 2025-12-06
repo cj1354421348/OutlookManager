@@ -23,7 +23,7 @@ async def fetch_access_token(credentials: AccountCredentials) -> str:
             access_token = token_data.get("access_token")
             if not access_token:
                 logger.error("No access token in response for %s", credentials.email)
-                raise HTTPException(status_code=401, detail="Failed to obtain access token from response")
+                raise HTTPException(status_code=400, detail="Failed to obtain access token from response")
             logger.info("Successfully obtained access token for %s", credentials.email)
             return access_token
     except httpx.HTTPStatusError as exc:
@@ -31,8 +31,8 @@ async def fetch_access_token(credentials: AccountCredentials) -> str:
         logger.error("%s for %s: %s", error_msg, credentials.email, exc)
         
         if exc.response.status_code == 400:
-            raise HTTPException(status_code=401, detail="Invalid refresh token or client credentials")
-        raise HTTPException(status_code=401, detail="Authentication failed")
+            raise HTTPException(status_code=400, detail="账户授权已过期: Invalid refresh token or client credentials")
+        raise HTTPException(status_code=400, detail="Authentication failed")
     except httpx.RequestError as exc:
         error_msg = "Request error getting access token"
         logger.error("%s for %s: %s", error_msg, credentials.email, exc)

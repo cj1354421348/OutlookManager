@@ -70,7 +70,7 @@ async function loadEmails(forceRefresh = false) {
                 emailsList.innerHTML = '<div class="error">邮箱授权已过期，请返回账户列表重新验证</div>';
             }
             showNotification('邮箱授权已过期，请重新验证凭据', 'warning');
-            setTimeout(() => backToAccounts(), 400);
+            // setTimeout(() => backToAccounts(), 400);
         } else {
             if (emailsList) {
                 emailsList.innerHTML = `<div class="error">❌ 加载失败: ${error.message}</div>`;
