@@ -82,7 +82,7 @@ COPY --chown=appuser:appgroup docker-entrypoint.sh .
 RUN chmod +x docker-entrypoint.sh
 
 # 创建数据目录用于持久化存储
-RUN mkdir -p /app/data
+RUN mkdir -p data
 
 # 暴露端口
 EXPOSE 8000
