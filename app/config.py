@@ -11,8 +11,8 @@ if hasattr(os, "tzset"):
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-ACCOUNTS_FILE = "accounts.json"
-SECURITY_FILE = "security.json"
+ACCOUNTS_FILE = "data/accounts.json"
+SECURITY_FILE = "data/security.json"
 
 # 数据库配置 - 使用默认值，连接到外部PostgreSQL数据库
 ACCOUNTS_DB_HOST = os.getenv("ACCOUNTS_DB_HOST", "localhost")

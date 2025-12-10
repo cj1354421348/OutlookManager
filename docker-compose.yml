@@ -8,7 +8,6 @@ services:
       - "8000:8000"
     volumes:
       - ./data:/app/data
-      - ./accounts.json:/app/accounts.json
     env_file:
       - .env
     environment:

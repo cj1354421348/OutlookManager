@@ -33,11 +33,7 @@ create_directories() {
     echo "📁 创建数据目录..."
     mkdir -p data
     
-    # 创建空的accounts.json如果不存在
-    if [ ! -f "accounts.json" ]; then
-        echo "{}" > accounts.json
-        echo "✅ 创建空的账户配置文件"
-    fi
+
 }
 
 # 构建和启动服务

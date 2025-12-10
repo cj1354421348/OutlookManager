@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 
-ACCOUNTS_FILE = "accounts.json"
+ACCOUNTS_FILE = "data/accounts.json"
 OUTPUT_DIR = "email_lists"
 OUTPUT_FILE_FORMAT = "{email_id}_{date}.json"
 
