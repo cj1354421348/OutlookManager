@@ -53,30 +53,11 @@ RUN python -c "import sys; print('Python path:', sys.path)" && \
     python -c "import fastapi; print('FastAPI installed at:', fastapi.__file__)" && \
     ls -la /usr/local/lib/python3.11/site-packages/ | head -10
 
-# 创建非root用户并设置权限
-RUN addgroup -g 1000 -S appgroup && \
-    adduser -u 1000 -S appuser -G appgroup && \
-    # 确保appuser对Python包目录有读权限
-    chown -R appuser:appgroup /usr/local/lib/python3.11/site-packages && \
-    chown -R appuser:appgroup /usr/local/bin && \
-    chown -R appuser:appgroup /app
-
-# 切换到非root用户前验证权限
-RUN ls -la /usr/local/lib/python3.11/site-packages/fastapi* && \
-    python -c "import fastapi; print('FastAPI accessible as root:', fastapi.__version__)"
-
-USER appuser
-
-# 验证非root用户权限
-RUN python -c "import sys; print('Python path as appuser:', sys.path)" && \
-    python -c "import fastapi; print('FastAPI accessible as appuser:', fastapi.__version__)" || \
-    (echo "ERROR: FastAPI not accessible as appuser" && exit 1)
-
 # 复制应用代码（确保不复制__pycache__）
-COPY --chown=appuser:appgroup app/ ./app/
-COPY --chown=appuser:appgroup main.py .
-COPY --chown=appuser:appgroup static/ ./static/
-COPY --chown=appuser:appgroup docker-entrypoint.sh .
+COPY app/ ./app/
+COPY main.py .
+COPY static/ ./static/
+COPY docker-entrypoint.sh .
 
 # 设置启动脚本权限
 RUN chmod +x docker-entrypoint.sh
