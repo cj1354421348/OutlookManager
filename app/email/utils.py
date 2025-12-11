@@ -77,12 +77,13 @@ def extract_sender_initial(from_email: str) -> str:
 
 
 def format_date(date_str: str) -> str:
+    from app.core.time_utils import parse_email_date, now
     try:
         if date_str:
-            return parsedate_to_datetime(date_str).isoformat()
+            return parse_email_date(date_str).isoformat()
     except Exception:  # noqa: BLE001
         pass
-    return datetime.now().isoformat()
+    return now().isoformat()
 
 
 __all__ = [

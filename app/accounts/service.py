@@ -10,7 +10,7 @@ from app.config import (
     ACCOUNTS_FILE,
     logger
 )
-from app.core.time_utils import now, now_str, TIMEZONE_SHANGHAI
+from app.core.time_utils import now, now_str
 from app.models import (
     AccountCredentials,
     AccountInfo,
@@ -237,14 +237,10 @@ class AccountService:
         if not isinstance(value, str):
             return None
         try:
-            parsed = datetime.fromisoformat(value)
-        except ValueError:
+            from app.core.time_utils import parse_iso
+            return parse_iso(value)
+        except (ValueError, TypeError):
             return None
-        if parsed.tzinfo is None:
-            # 如果没有时区信息，默认为东八区
-            return parsed.replace(tzinfo=TIMEZONE_SHANGHAI)
-        # 如果有时区，统一转换到东八区进行比较
-        return parsed.astimezone(TIMEZONE_SHANGHAI)
 
 
 synchronizer = AccountSynchronizer()

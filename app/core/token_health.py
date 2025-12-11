@@ -183,11 +183,12 @@ class TokenHealthScheduler:
             return
 
     async def _run_once_with_status(self) -> None:
+        from app.core.time_utils import timestamp
         self._status.running = True
-        self._status.last_started_at = time.time()
+        self._status.last_started_at = timestamp()
         try:
             result = await self._service.run_once()
             self._status.last_result = result
         finally:
             self._status.running = False
-            self._status.last_completed_at = time.time()
+            self._status.last_completed_at = timestamp()

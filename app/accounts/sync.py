@@ -21,7 +21,7 @@ from app.config import (
     DATABASE_URL,
     logger,
 )
-from app.core.time_utils import now_str, parse_iso, TIMEZONE_SHANGHAI
+from app.core.time_utils import now_str, parse_iso
 from datetime import timezone
 from app.models.schemas import AccountSchema
 from collections import defaultdict
@@ -167,7 +167,7 @@ class AccountSynchronizer:
 
         added = updated = skipped = 0
         connection = self._connect()
-        from datetime import datetime, timezone
+        from datetime import timezone
         
         try:
             self._ensure_schema(connection)
@@ -183,7 +183,10 @@ class AccountSynchronizer:
                     dt = row['last_modified_at']
                     if dt and dict(row).get('last_modified_at'):
                         if dt.tzinfo is None:
-                            dt = dt.replace(tzinfo=timezone.utc)
+                            try:
+                                dt = dt.replace(tzinfo=timezone.utc)
+                            except Exception:
+                                pass
                         remote_ts = dt.astimezone(TIMEZONE_SHANGHAI).isoformat()
                     else:
                         remote_ts = None
@@ -203,32 +206,27 @@ class AccountSynchronizer:
                     remote_hash = remote_info["hash"] if remote_info else None
 
                     # 逻辑 1: 处理手动编辑 (Manual Edit Handling)
-                    # 如果提供了 file_mtime，我们需要检查是否以此作为新的时间戳
                     current_local_ts = local_ts_str
                     if file_mtime and local_ts_str:
                         try:
-                            # 如果文件修改时间明显晚于记录的时间戳 (例如 > 60s)
-                            # 这里的 file_mtime 是 UTC timestamp float? os.path.getmtime 是 float seconds
-                            # 我们比较简单点：如果在文件修改时间之后，last_modified_at 还很老，说明可能漏改了
-                            # 但最好只在 hash 不同时才关心这个
+                            # 这里的 file_mtime 是 float seconds
                             if local_hash != remote_hash:
                                 l_dt = parse_iso(local_ts_str)
                                 if l_dt:
                                     # 将 file_mtime (本地时间戳) 转为 aware datetime
-                                    # os.path.getmtime 返回的是系统本地时间或者UTC? 通常是 epoch seconds
-                                    # python datetime.fromtimestamp(file_mtime) 返回本地时间
-                                    # 我们统一用 UTC 比较
-                                    f_dt = datetime.fromtimestamp(file_mtime).astimezone(timezone.utc)
+                                    from app.core.time_utils import from_timestamp
+                                    # time_utils 返回的是 UTC+8
+                                    f_dt = from_timestamp(file_mtime)
+                                    
+                                    # 为了计算 diff，统一转 UTC
+                                    f_dt_utc = f_dt.astimezone(timezone.utc)
                                     l_dt_utc = l_dt.astimezone(timezone.utc)
                                     
                                     # 如果文件时间比记录时间晚 10 秒以上
-                                    if (f_dt - l_dt_utc).total_seconds() > 10:
+                                    if (f_dt_utc - l_dt_utc).total_seconds() > 10:
                                         logger.info(f"Detected potential manual edit for {email}: File Time > Local TS. Using File Time.")
-                                        # 使用文件时间作为新的比较基准 (转为 ISO 字符串)
-                                        # 注意：这里我们只在比较时使用，并没有写回文件（因为这是单向 sync 到 DB）
-                                        # 如果写回 DB，DB 会有更新的时间
                                         current_local_ts = f_dt.astimezone(TIMEZONE_SHANGHAI).isoformat()
-                                        local_data['last_modified_at'] = current_local_ts # Update in-memory for DB write
+                                        local_data['last_modified_at'] = current_local_ts
                         except Exception:
                             pass # 忽略时间比较错误
 
@@ -253,7 +251,6 @@ class AccountSynchronizer:
                         else:
                             updated += 1
                     else:
-                        # logger.debug(f"SKIP {email}: Hashes Match? {local_hash == remote_hash}")
                         skipped += 1
             
             connection.commit()

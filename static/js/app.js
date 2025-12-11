@@ -170,7 +170,7 @@ GET /emails/{email_id}/{message_id}
 \`\`\`
 
 ---
-生成时间: ${new Date().toLocaleString()}
+生成时间: ${TimeUtils.format(TimeUtils.now(), { hour12: false })}
 `;
 }
 
@@ -275,7 +275,7 @@ async function initializeApp() {
                                 }
                             });
                             // Sort by timestamp desc
-                            window.trafficLogs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                            window.trafficLogs.sort((a, b) => TimeUtils.fromISO(b.timestamp) - TimeUtils.fromISO(a.timestamp));
                         }
                     })
                     .catch(e => console.error("Initial history load failed", e));

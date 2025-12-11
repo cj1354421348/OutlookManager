@@ -94,10 +94,12 @@ async def list_emails(imap_pool: IMAPConnectionPool, credentials: AccountCredent
                         date_str = msg.get("Date", "")
 
                         try:
-                            date_obj = parsedate_to_datetime(date_str) if date_str else datetime.now()
+                            from app.core.time_utils import now
+                            date_obj = parsedate_to_datetime(date_str) if date_str else now()
                             formatted_date = date_obj.isoformat()
                         except Exception:  # noqa: BLE001
-                            date_obj = datetime.now()
+                            from app.core.time_utils import now
+                            date_obj = now()
                             formatted_date = date_obj.isoformat()
 
                         message_id = f"{folder_name}-{fetched_msg_id.decode()}"

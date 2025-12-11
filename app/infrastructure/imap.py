@@ -21,57 +21,61 @@ class LoggedIMAP4_SSL(imaplib.IMAP4_SSL):
         pass
 
     def select(self, mailbox='INBOX', readonly=False):
-        start = time.monotonic()
+        from app.core.time_utils import monotonic
+        start = monotonic()
         try:
             status, data = super().select(mailbox, readonly)
-            duration = (time.monotonic() - start) * 1000
+            duration = (monotonic() - start) * 1000
             traffic_logger.log("IMAP", self._email_account, f"SELECT {mailbox}", status, duration)
             return status, data
         except Exception as e:
-            duration = (time.monotonic() - start) * 1000
+            duration = (monotonic() - start) * 1000
             traffic_logger.log("IMAP", self._email_account, f"SELECT {mailbox}", "ERROR", duration, str(e))
             raise
 
     def search(self, charset, *criteria):
-        start = time.monotonic()
+        from app.core.time_utils import monotonic
+        start = monotonic()
         crit_str = " ".join(str(c) for c in criteria)
         try:
             status, data = super().search(charset, *criteria)
-            duration = (time.monotonic() - start) * 1000
+            duration = (monotonic() - start) * 1000
             count = 0
             if status == "OK" and data and data[0]:
                 count = len(data[0].split())
             traffic_logger.log("IMAP", self._email_account, f"SEARCH {crit_str}", status, duration, f"Found {count} msgs")
             return status, data
         except Exception as e:
-            duration = (time.monotonic() - start) * 1000
+            duration = (monotonic() - start) * 1000
             traffic_logger.log("IMAP", self._email_account, f"SEARCH {crit_str}", "ERROR", duration, str(e))
             raise
 
     def fetch(self, message_set, message_parts):
-        start = time.monotonic()
+        from app.core.time_utils import monotonic
+        start = monotonic()
         try:
             status, data = super().fetch(message_set, message_parts)
-            duration = (time.monotonic() - start) * 1000
+            duration = (monotonic() - start) * 1000
             # Clean up message_parts string for logging (truncate if too long)
             parts_summary = str(message_parts)[:50] + "..." if len(str(message_parts)) > 50 else str(message_parts)
             traffic_logger.log("IMAP", self._email_account, f"FETCH {str(message_set)[:20]} {parts_summary}", status, duration)
             return status, data
         except Exception as e:
-            duration = (time.monotonic() - start) * 1000
+            duration = (monotonic() - start) * 1000
             traffic_logger.log("IMAP", self._email_account, f"FETCH {str(message_set)[:20]}", "ERROR", duration, str(e))
             raise
             
     def authenticate(self, mechanism, authobject):
-        start = time.monotonic()
+        from app.core.time_utils import monotonic
+        start = monotonic()
         try:
             # Mask auth object in logs
             res = super().authenticate(mechanism, authobject)
-            duration = (time.monotonic() - start) * 1000
+            duration = (monotonic() - start) * 1000
             traffic_logger.log("IMAP", self._email_account, f"AUTHENTICATE {mechanism}", "OK", duration)
             return res
         except Exception as e:
-            duration = (time.monotonic() - start) * 1000
+            duration = (monotonic() - start) * 1000
             traffic_logger.log("IMAP", self._email_account, f"AUTHENTICATE {mechanism}", "ERROR", duration, str(e))
             raise
 

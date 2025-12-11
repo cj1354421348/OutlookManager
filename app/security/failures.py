@@ -21,12 +21,13 @@ class FailureRegistry:
         self._total_failures = 0
 
     def register_failure(self, ip: str) -> None:
+        from app.core.time_utils import timestamp
         with self._lock:
             entry = self._store[ip]
             entry.count += 1
             self._total_failures += 1
             if entry.count >= LOCK_THRESHOLD:
-                entry.locked_until = time.time() + LOCK_DURATION_SECONDS
+                entry.locked_until = timestamp() + LOCK_DURATION_SECONDS
                 logger.warning("IP %s locked for %s seconds", ip, LOCK_DURATION_SECONDS)
 
     def reset(self, ip: str) -> None:
@@ -35,19 +36,21 @@ class FailureRegistry:
                 self._store[ip] = FailureEntry()
 
     def is_locked(self, ip: str) -> bool:
+        from app.core.time_utils import timestamp
         with self._lock:
             entry = self._store.get(ip)
             if not entry:
                 return False
-            if entry.locked_until > time.time():
+            if entry.locked_until > timestamp():
                 return True
-            if entry.locked_until and entry.locked_until <= time.time():
+            if entry.locked_until and entry.locked_until <= timestamp():
                 self._store[ip] = FailureEntry()
             return False
 
     def locked_ips(self) -> list[str]:
+        from app.core.time_utils import timestamp
         with self._lock:
-            now = time.time()
+            now = timestamp()
             return [ip for ip, entry in self._store.items() if entry.locked_until > now]
 
     def total_failures(self) -> int:

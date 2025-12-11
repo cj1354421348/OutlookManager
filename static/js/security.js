@@ -246,7 +246,7 @@ function updateTokenHealthStatus() {
         return;
     }
 
-    const fmt = (ts) => (ts ? new Date(ts * 1000).toLocaleString() : '无记录');
+    const fmt = (ts) => (ts ? TimeUtils.format(ts * 1000) : '无记录');
     statusBadge.textContent = window.tokenHealthStatus.running ? '运行中' : '空闲';
     statusBadge.className = window.tokenHealthStatus.running ? 'status-badge active' : 'status-badge idle';
     lastRunLabel.textContent = fmt(window.tokenHealthStatus.last_completed_at);

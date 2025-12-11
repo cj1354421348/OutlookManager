@@ -18,19 +18,21 @@ class EmailCache:
             self.invalidate(key)
             return None
 
+        from app.core.time_utils import timestamp
         with self._lock:
             cached = self._store.get(key)
             if not cached:
                 return None
-            data, timestamp = cached
-            if time.time() - timestamp >= self._expire_seconds:
+            data, ts = cached
+            if timestamp() - ts >= self._expire_seconds:
                 self._store.pop(key, None)
                 return None
             return data
 
     def set(self, key: str, data: Any) -> None:
+        from app.core.time_utils import timestamp
         with self._lock:
-            self._store[key] = (data, time.time())
+            self._store[key] = (data, timestamp())
 
     def invalidate(self, key: str) -> None:
         with self._lock:

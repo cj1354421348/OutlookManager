@@ -31,6 +31,8 @@ function startGlobalTrafficStream() {
                     if (done) {
                         console.log('Traffic stream complete');
                         handleStreamDisconnect();
+                        // Sort by timestamp desc
+                        window.trafficLogs.sort((a, b) => TimeUtils.fromISO(b.timestamp) - TimeUtils.fromISO(a.timestamp));
                         return;
                     }
 
@@ -143,13 +145,16 @@ function renderTrafficLogs() {
 function createTrafficRow(log) {
     const statusClass = log.status === 'OK' ? 'badge-ok' : 'badge-error';
     const protocolClass = log.protocol === 'HTTP' ? 'badge-http' : 'badge-imap';
-    const date = new Date(log.timestamp);
-    const timeStr = date.toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    // Use TimeUtils for consistent formatting (Asia/Shanghai)
+    const timeStr = TimeUtils.format(log.timestamp, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }).split(' ')[1] || TimeUtils.format(log.timestamp, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    // Or simpler if formatTime generates what we want (it excludes date).
+    // TimeUtils.formatTime returns "HH:mm:ss".
+    // Let's use TimeUtils.formatTime(log.timestamp).
     const accountShort = log.account.includes('@') ? log.account.split('@')[0] : log.account;
 
     return `
         <tr>
-            <td class="td-time">${timeStr}</td>
+            <td class="td-time">${TimeUtils.formatTime(log.timestamp)}</td>
             <td class="td-protocol">
                 <span class="protocol-badge ${protocolClass}">${log.protocol}</span>
             </td>

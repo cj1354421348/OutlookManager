@@ -12,8 +12,9 @@ class SessionStore:
         self._lock = threading.Lock()
 
     def create(self, username: str) -> str:
+        from app.core.time_utils import timestamp
         session_id = secrets.token_urlsafe(32)
-        now = time.time()
+        now = timestamp()
         with self._lock:
             self._sessions[session_id] = {
                 "username": username,
@@ -23,10 +24,11 @@ class SessionStore:
         return session_id
 
     def get(self, session_id: str) -> Optional[Dict[str, float]]:
+        from app.core.time_utils import timestamp
         with self._lock:
             session = self._sessions.get(session_id)
             if session:
-                session["last_active"] = time.time()
+                session["last_active"] = timestamp()
             return session
 
     def remove(self, session_id: str) -> None:

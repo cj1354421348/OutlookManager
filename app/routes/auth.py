@@ -38,6 +38,29 @@ async def logout(request: Request, session: Dict[str, float] = Depends(require_s
 
 
 @router.get("/session")
+async def get_session_info(session: Dict[str, float] = Depends(require_session)) -> Dict[str, Any]:
+    from app.core import time_utils
+    # Return server time for client synchronization
+    return {
+        "username": session.get("username", ""),
+        "server_timestamp": time_utils.timestamp(),
+        # We could add "server_timezone" if we had a reliable IANA name, 
+        # but for now syncing the point-in-time is the priority.
+    }
+
+
+@router.get("/security-stats")
+async def security_stats(session: Dict[str, float] = Depends(require_session)) -> Dict[str, object]:
+    return security_service.get_security_stats()
+
+    session_id = request.cookies.get(SESSION_COOKIE_NAME)
+    security_service.logout(session_id)
+    response = JSONResponse({"message": "已退出"})
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    return response
+
+
+@router.get("/session")
 async def get_session_info(session: Dict[str, float] = Depends(require_session)) -> Dict[str, str]:
     return {"username": session.get("username", "")}
 
@@ -57,7 +80,8 @@ async def set_api_key(
     payload: ApiKeyRequest,
     session: Dict[str, float] = Depends(require_session),
 ) -> Dict[str, str]:
-    new_key = security_service.set_api_key(payload.api_key, datetime.utcnow().isoformat())
+    from app.core.time_utils import now_str
+    new_key = security_service.set_api_key(payload.api_key, now_str())
     return {"api_key": new_key}
 
 

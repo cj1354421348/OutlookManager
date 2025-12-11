@@ -35,7 +35,9 @@ def log_token_failure(
         error_message: 错误消息
         operation: 操作类型
     """
-    now = datetime.now(timezone.utc)
+    from app.core.time_utils import now
+    # 获取当前时间 (统一使用项目时区)
+    current_time = now()
     
     # 构建结构化日志
     log_data = {
@@ -46,7 +48,7 @@ def log_token_failure(
         "threshold": threshold,
         "status_code": status_code,
         "error_message": error_message,
-        "timestamp": now.isoformat(),
+        "timestamp": current_time.isoformat(),
     }
     
     # 记录结构化日志
@@ -79,15 +81,33 @@ def log_imap_failure(
         error_message: 错误消息
         operation: 操作类型
     """
-    now = datetime.now(timezone.utc)
+    from app.core.time_utils import now
+    current_time = now()
     
     # 计算时间窗口进度
     window_progress = ""
     if first_failure_at:
-        elapsed = now - first_failure_at
+        # first_failure_at 需要确保有时区，否则 astimezone 可能会出错
+        # 如果是之前保存的 UTC 时间，可能带时区，也可能不带。
+        # 这里尽量保证计算正确
+        try:
+             elapsed = current_time - first_failure_at
+        except TypeError:
+             # offset-naive vs offset-aware mismatch
+             # 尝试将 first_failure_at 转为 aware
+             if first_failure_at.tzinfo is None:
+                 # 假设是 UTC? 或者项目时区?
+                 # failure_logger 之前是用 datetime.now(timezone.utc)
+                 from datetime import timezone
+                 first_failure_at = first_failure_at.replace(tzinfo=timezone.utc)
+             elapsed = current_time - first_failure_at
+
         remaining = window_duration - elapsed
-        progress_percent = min(100, (elapsed / window_duration) * 100)
-        
+        try:
+            progress_percent = min(100, (elapsed / window_duration) * 100)
+        except ZeroDivisionError:
+            progress_percent = 100
+
         window_progress = (
             f"时间窗口进度: {progress_percent:.1f}% "
             f"(已过: {format_duration(elapsed)}, "
@@ -96,7 +116,7 @@ def log_imap_failure(
     
     # 分析未导致标记过期的原因
     expiration_reason = analyze_non_expiration_reason(
-        failure_count, threshold, first_failure_at, window_duration, now
+        failure_count, threshold, first_failure_at, window_duration, current_time
     )
     
     # 构建结构化日志
@@ -109,7 +129,7 @@ def log_imap_failure(
         "error_message": error_message,
         "window_progress": window_progress,
         "non_expiration_reason": expiration_reason,
-        "timestamp": now.isoformat(),
+        "timestamp": current_time.isoformat(),
     }
     
     # 记录结构化日志

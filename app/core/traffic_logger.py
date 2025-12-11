@@ -45,9 +45,10 @@ class TrafficLogger:
 
     def log(self, protocol: str, account: str, action: str, 
             status: str, duration_ms: float, details: str = "") -> TrafficLogEntry:
+        from app.core.time_utils import now
         entry = TrafficLogEntry(
             id=str(uuid.uuid4()),
-            timestamp=datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).isoformat(),
+            timestamp=now().isoformat(),
             protocol=protocol,
             account=account,
             action=action,

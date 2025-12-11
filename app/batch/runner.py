@@ -17,9 +17,10 @@ async def run() -> None:
             logger.error("No valid accounts found")
             return
 
+        from app.core.time_utils import now
         logger.info("Processing %s accounts", len(accounts))
         imap_pool = IMAPConnectionPool()
-        current_date = datetime.now().strftime("%Y%m%d")
+        current_date = now().strftime("%Y%m%d")
 
         for email_id, credentials in accounts.items():
             try:

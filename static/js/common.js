@@ -26,41 +26,7 @@ window.contextMenuTarget = null;
 
 // 工具函数
 function formatEmailDate(dateString) {
-    try {
-        if (!dateString) return '未知时间';
-
-        let date = new Date(dateString);
-
-        if (Number.isNaN(date.getTime())) {
-            if (dateString.includes('T') && !dateString.includes('Z') && !dateString.includes('+')) {
-                date = new Date(`${dateString}Z`);
-            }
-            if (Number.isNaN(date.getTime())) {
-                return '日期格式错误';
-            }
-        }
-
-        const now = new Date();
-        const diffMs = now - date;
-        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-        if (diffDays === 0) {
-            return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-        }
-        if (diffDays === 1) {
-            return `昨天 ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
-        }
-        if (diffDays < 7) {
-            return `${diffDays}天前`;
-        }
-        if (diffDays < 365) {
-            return date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
-        }
-        return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'short', day: 'numeric' });
-    } catch (error) {
-        console.error('格式化时间失败:', error);
-        return '时间解析失败';
-    }
+    return TimeUtils.formatRelative(dateString);
 }
 
 function showNotification(message, type = 'info', title = '', duration = 5000) {
@@ -143,7 +109,10 @@ async function apiRequest(url, options = {}) {
 }
 
 async function checkSession() {
-    await apiRequest('/auth/session', { skipApiKey: true, useSession: true });
+    const data = await apiRequest('/auth/session', { skipApiKey: true, useSession: true });
+    if (data && data.server_timestamp) {
+        TimeUtils.init(data.server_timestamp);
+    }
 }
 
 function setButtonLoading(button, loadingText) {

@@ -56,7 +56,7 @@ async function loadEmails(forceRefresh = false) {
 
         const lastUpdateLabel = document.getElementById('lastUpdateTime');
         if (lastUpdateLabel) {
-            lastUpdateLabel.textContent = new Date().toLocaleString();
+            lastUpdateLabel.textContent = TimeUtils.format(TimeUtils.now());
         }
 
         updateEmailsPagination(data.total_emails || window.allEmails.length, data.page_size || 100);
@@ -202,7 +202,7 @@ function createEmailItem(email) {
             <div class="email-content">
                 <div class="email-header">
                     <div class="email-subject">${email.subject || '(无主题)'}</div>
-                    <div class="email-date">${formatEmailDate(email.date)}</div>
+                            <div class="email-date">${TimeUtils.format(email.date, { hour12: false })}</div>
                 </div>
                 <div class="email-from">${readIcon} ${email.from_email} ${attachmentIcon}</div>
                 <div class="email-preview">文件夹: ${email.folder} | 点击查看详情</div>
@@ -234,7 +234,7 @@ async function showEmailDetail(messageId) {
             <div class="email-detail-meta">
                 <p><strong>发件人:</strong> ${data.from_email}</p>
                 <p><strong>收件人:</strong> ${data.to_email}</p>
-                <p><strong>日期:</strong> ${formatEmailDate(data.date)} (${new Date(data.date).toLocaleString()})</p>
+                <p><strong>日期:</strong> ${formatEmailDate(data.date)} (${TimeUtils.format(data.date, { hour12: false })})</p>
                 <p><strong>邮件ID:</strong> ${data.message_id}</p>
             </div>
             ${renderEmailContent(data)}
