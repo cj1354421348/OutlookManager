@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,6 +10,7 @@
     <link rel="stylesheet" href="/static/css/components.css">
     <link rel="stylesheet" href="/static/css/responsive.css">
 </head>
+
 <body>
     <div class="app-container">
         <!-- 左侧菜单 -->
@@ -38,7 +40,8 @@
                     <span class="icon">⚙️</span>
                     安全设置
                 </button>
-                <button class="nav-item" onclick="showPage('emails', this)" oncontextmenu="showEmailsContextMenu(event)" id="emailsNav" style="display: none;">
+                <button class="nav-item" onclick="showPage('emails', this)" oncontextmenu="showEmailsContextMenu(event)"
+                    id="emailsNav" style="display: none;">
                     <span class="icon">📧</span>
                     邮件列表
                 </button>
@@ -70,11 +73,13 @@
                                     <span>📦</span>
                                     批量添加
                                 </button>
-                                <button class="btn btn-secondary btn-sm" id="syncToServerBtn" onclick="syncAccountsToServer(this)">
+                                <button class="btn btn-secondary btn-sm" id="syncToServerBtn"
+                                    onclick="syncAccountsToServer(this)">
                                     <span>⬆️</span>
                                     推送到服务器
                                 </button>
-                                <button class="btn btn-secondary btn-sm" id="syncFromServerBtn" onclick="syncAccountsFromServer(this)">
+                                <button class="btn btn-secondary btn-sm" id="syncFromServerBtn"
+                                    onclick="syncAccountsFromServer(this)">
                                     <span>⬇️</span>
                                     拉取到本地
                                 </button>
@@ -84,15 +89,17 @@
                                 </button>
                             </div>
                         </div>
-                        
+
                         <!-- 搜索和过滤区域 -->
                         <div class="search-container">
                             <div class="flex gap-3 mb-4">
                                 <div class="flex-1">
-                                    <input type="text" id="accountEmailSearch" class="form-control" placeholder="按邮箱账号搜索..." onkeypress="handleSearchKeyPress(event)">
+                                    <input type="text" id="accountEmailSearch" class="form-control"
+                                        placeholder="按邮箱账号搜索..." onkeypress="handleSearchKeyPress(event)">
                                 </div>
                                 <div class="flex-1">
-                                    <input type="text" id="tagSearch" class="form-control" placeholder="按标签搜索..." onkeypress="handleSearchKeyPress(event)">
+                                    <input type="text" id="tagSearch" class="form-control" placeholder="按标签搜索..."
+                                        onkeypress="handleSearchKeyPress(event)">
                                 </div>
                                 <button class="btn btn-primary" onclick="searchAccounts()">
                                     <span>🔍</span>
@@ -104,7 +111,7 @@
                                 </button>
                             </div>
                         </div>
-                        
+
                         <!-- 统计信息 -->
                         <div id="accountsStats" class="mb-4" style="display: none;">
                             <div class="flex gap-4 text-sm">
@@ -120,7 +127,7 @@
                                 正在加载账户列表...
                             </div>
                         </div>
-                        
+
                         <!-- 分页控件 -->
                         <div id="accountsPagination" class="pagination" style="display: none;">
                             <button class="btn btn-sm" id="prevPageBtn" onclick="changePage('prev')" disabled>
@@ -153,13 +160,15 @@
                         <div style="max-width: 600px;">
                             <div class="form-group">
                                 <label class="form-label">邮箱地址 *</label>
-                                <input type="email" id="email" class="form-input" placeholder="example@outlook.com" required>
+                                <input type="email" id="email" class="form-input" placeholder="example@outlook.com"
+                                    required>
                                 <p class="text-xs" style="color: #64748b; margin-top: 4px;">请输入有效的Outlook邮箱地址</p>
                             </div>
 
                             <div class="form-group">
                                 <label class="form-label">刷新令牌 (Refresh Token) *</label>
-                                <textarea id="refreshToken" class="form-input form-textarea" rows="4" placeholder="从Azure应用获取的refresh_token" required></textarea>
+                                <textarea id="refreshToken" class="form-input form-textarea" rows="4"
+                                    placeholder="从Azure应用获取的refresh_token" required></textarea>
                                 <p class="text-xs" style="color: #64748b; margin-top: 4px;">
                                     从Azure应用程序注册中获取的刷新令牌，用于OAuth2认证
                                 </p>
@@ -167,17 +176,23 @@
 
                             <div class="form-group">
                                 <label class="form-label">客户端ID (Client ID) *</label>
-                                <input type="text" id="clientId" class="form-input" placeholder="Azure应用的client_id" required>
+                                <input type="text" id="clientId" class="form-input" placeholder="Azure应用的client_id"
+                                    required>
                                 <p class="text-xs" style="color: #64748b; margin-top: 4px;">
                                     Azure应用程序的客户端标识符
                                 </p>
                             </div>
 
                             <div class="form-group">
-                                <div style="background: #f8fafc; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0;">
-                                    <h4 style="margin: 0 0 8px 0; font-size: 0.875rem; font-weight: 600; color: #374151;">📋 获取步骤：</h4>
-                                    <ol style="margin: 0; padding-left: 20px; font-size: 0.75rem; color: #6b7280; line-height: 1.5;">
-                                        <li>访问 <a href="https://portal.azure.com" target="_blank" style="color: #3b82f6;">Azure Portal</a></li>
+                                <div
+                                    style="background: #f8fafc; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                                    <h4
+                                        style="margin: 0 0 8px 0; font-size: 0.875rem; font-weight: 600; color: #374151;">
+                                        📋 获取步骤：</h4>
+                                    <ol
+                                        style="margin: 0; padding-left: 20px; font-size: 0.75rem; color: #6b7280; line-height: 1.5;">
+                                        <li>访问 <a href="https://portal.azure.com" target="_blank"
+                                                style="color: #3b82f6;">Azure Portal</a></li>
                                         <li>注册应用程序并配置权限</li>
                                         <li>获取Client ID和Refresh Token</li>
                                         <li>确保应用有邮件读取权限</li>
@@ -198,7 +213,8 @@
                                 <button class="btn btn-secondary" onclick="clearAddAccountForm()">
                                     <span>🗑️</span>
                                     清空表单
-                                </button></div>
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -225,7 +241,8 @@
                                 </p>
                                 <p class="text-sm" style="color: #64748b; margin-bottom: 12px;">
                                     📧 推荐购买地址（非广告，只是推荐）：
-                                    <a target="_blank" href="http://wmemail.com" style="color: #3b82f6; margin: 0 8px;">wmemail.com</a>
+                                    <a target="_blank" href="http://wmemail.com"
+                                        style="color: #3b82f6; margin: 0 8px;">wmemail.com</a>
                                 </p>
                                 <textarea id="batchAccounts" class="form-input form-textarea" rows="12" placeholder="example1@outlook.com----password1----refresh_token1----client_id1
 example2@outlook.com----password2----refresh_token2----client_id2
@@ -236,9 +253,13 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                             </div>
 
                             <div class="form-group">
-                                <div style="background: #fef3c7; padding: 16px; border-radius: 8px; border: 1px solid #fbbf24;">
-                                    <h4 style="margin: 0 0 8px 0; font-size: 0.875rem; font-weight: 600; color: #92400e;">⚠️ 注意事项：</h4>
-                                    <ul style="margin: 0; padding-left: 20px; font-size: 0.75rem; color: #92400e; line-height: 1.5;">
+                                <div
+                                    style="background: #fef3c7; padding: 16px; border-radius: 8px; border: 1px solid #fbbf24;">
+                                    <h4
+                                        style="margin: 0 0 8px 0; font-size: 0.875rem; font-weight: 600; color: #92400e;">
+                                        ⚠️ 注意事项：</h4>
+                                    <ul
+                                        style="margin: 0; padding-left: 20px; font-size: 0.75rem; color: #92400e; line-height: 1.5;">
                                         <li>确保所有账户信息格式正确</li>
                                         <li>建议先测试少量账户再批量添加</li>
                                         <li>添加过程中请勿关闭页面</li>
@@ -259,7 +280,8 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                                 <button class="btn btn-secondary" onclick="validateBatchFormat()">
                                     <span>✅</span>
                                     验证格式
-                                </button></div>
+                                </button>
+                            </div>
 
                             <!-- 批量添加进度 -->
                             <div id="batchProgress" class="hidden" style="margin-top: 24px;">
@@ -267,7 +289,8 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                                 <div class="progress-bar">
                                     <div class="progress-fill" id="batchProgressFill"></div>
                                 </div>
-                                <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: #64748b; margin-top: 8px;">
+                                <div
+                                    style="display: flex; justify-content: space-between; font-size: 0.75rem; color: #64748b; margin-top: 8px;">
                                     <span id="batchProgressText">准备中...</span>
                                     <span id="batchProgressCount">0 / 0</span>
                                 </div>
@@ -317,7 +340,8 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                                     </div>
                                     <div class="api-section">
                                         <h4>认证方式</h4>
-                                        <p class="api-description">登录后使用服务器返回的会话 Cookie，并在请求头中附加 <code>Authorization: Key &lt;API_KEY&gt;</code>。</p>
+                                        <p class="api-description">登录后使用服务器返回的会话 Cookie，并在请求头中附加
+                                            <code>Authorization: Key &lt;API_KEY&gt;</code>。</p>
                                     </div>
                                     <div class="api-section">
                                         <h4>响应格式</h4>
@@ -367,19 +391,19 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                                     <div class="api-section">
                                         <h4>响应示例</h4>
                                         <div class="api-example">{
-  "total_accounts": 25,
-  "page": 1,
-  "page_size": 10,
-  "total_pages": 3,
-  "accounts": [
-    {
-      "email_id": "example@outlook.com",
-      "client_id": "your-client-id",
-      "status": "active",
-      "tags": ["工作", "个人"]
-    }
-  ]
-}</div>
+                                            "total_accounts": 25,
+                                            "page": 1,
+                                            "page_size": 10,
+                                            "total_pages": 3,
+                                            "accounts": [
+                                            {
+                                            "email_id": "example@outlook.com",
+                                            "client_id": "your-client-id",
+                                            "status": "active",
+                                            "tags": ["工作", "个人"]
+                                            }
+                                            ]
+                                            }</div>
                                     </div>
 
                                     <div class="api-response" id="accountsResponse">
@@ -440,30 +464,32 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
 
                                     <div class="api-section">
                                         <h4>请求示例</h4>
-                                        <div class="api-example">GET /emails/example%40outlook.com?folder=inbox&page=1&page_size=20&refresh=true</div>
+                                        <div class="api-example">GET
+                                            /emails/example%40outlook.com?folder=inbox&page=1&page_size=20&refresh=true
+                                        </div>
                                     </div>
 
                                     <div class="api-section">
                                         <h4>响应示例</h4>
                                         <div class="api-example">{
-  "email_id": "example@outlook.com",
-  "folder_view": "inbox",
-  "page": 1,
-  "page_size": 20,
-  "total_emails": 150,
-  "emails": [
-    {
-      "message_id": "INBOX-1",
-      "folder": "INBOX",
-      "subject": "邮件主题",
-      "from_email": "sender@example.com",
-      "date": "2024-01-01T12:00:00Z",
-      "is_read": false,
-      "has_attachments": true,
-      "sender_initial": "S"
-    }
-  ]
-}</div>
+                                            "email_id": "example@outlook.com",
+                                            "folder_view": "inbox",
+                                            "page": 1,
+                                            "page_size": 20,
+                                            "total_emails": 150,
+                                            "emails": [
+                                            {
+                                            "message_id": "INBOX-1",
+                                            "folder": "INBOX",
+                                            "subject": "邮件主题",
+                                            "from_email": "sender@example.com",
+                                            "date": "2024-01-01T12:00:00Z",
+                                            "is_read": false,
+                                            "has_attachments": true,
+                                            "sender_initial": "S"
+                                            }
+                                            ]
+                                            }</div>
                                     </div>
 
                                     <div class="api-response" id="emailsResponse">
@@ -509,14 +535,14 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                                     <div class="api-section">
                                         <h4>响应示例</h4>
                                         <div class="api-example">{
-  "message_id": "INBOX-1",
-  "subject": "邮件主题",
-  "from_email": "sender@example.com",
-  "to_email": "example@outlook.com",
-  "date": "2024-01-01T12:00:00Z",
-  "body_plain": "纯文本邮件内容",
-  "body_html": "&lt;html&gt;&lt;body&gt;HTML邮件内容&lt;/body&gt;&lt;/html&gt;"
-}</div>
+                                            "message_id": "INBOX-1",
+                                            "subject": "邮件主题",
+                                            "from_email": "sender@example.com",
+                                            "to_email": "example@outlook.com",
+                                            "date": "2024-01-01T12:00:00Z",
+                                            "body_plain": "纯文本邮件内容",
+                                            "body_html": "&lt;html&gt;&lt;body&gt;HTML邮件内容&lt;/body&gt;&lt;/html&gt;"
+                                            }</div>
                                     </div>
 
                                     <div class="api-response" id="emailDetailResponse">
@@ -546,8 +572,10 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                         <div class="form-group">
                             <label class="form-label">当前 API Key</label>
                             <div style="display: flex; align-items: center; gap: 12px;">
-                                <input id="apiKeyDisplay" class="form-input" type="text" readonly value="未设置" style="flex: 1;">
-                                <button id="copyApiKeyBtn" class="btn btn-secondary btn-sm" onclick="copyApiKey()" disabled>
+                                <input id="apiKeyDisplay" class="form-input" type="text" readonly value="未设置"
+                                    style="flex: 1;">
+                                <button id="copyApiKeyBtn" class="btn btn-secondary btn-sm" onclick="copyApiKey()"
+                                    disabled>
                                     <span>📋</span>
                                     复制
                                 </button>
@@ -569,7 +597,8 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
 
                         <div class="form-group">
                             <label class="form-label">自定义 Key</label>
-                            <input id="customApiKeyInput" class="form-input" type="text" placeholder="输入自定义 Key（建议至少32位随机字符）">
+                            <input id="customApiKeyInput" class="form-input" type="text"
+                                placeholder="输入自定义 Key（建议至少32位随机字符）">
                             <button class="btn btn-secondary" style="margin-top: 12px;" onclick="saveCustomApiKey()">
                                 <span>💾</span>
                                 保存自定义 Key
@@ -589,7 +618,8 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                             </div>
                             <div class="flex items-center" style="gap: 8px; margin-top: 12px;">
                                 <label for="tokenHealthInterval" class="form-label" style="margin: 0;">巡检间隔（分钟）</label>
-                                <input id="tokenHealthInterval" type="number" min="60" max="10080" class="form-input" style="max-width: 140px;" value="1440">
+                                <input id="tokenHealthInterval" type="number" min="60" max="10080" class="form-input"
+                                    style="max-width: 140px;" value="1440">
                                 <button class="btn btn-secondary btn-sm" onclick="saveTokenHealthInterval()">保存</button>
                             </div>
                             <div class="flex items-center" style="gap: 8px; margin-top: 12px;">
@@ -598,7 +628,8 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                                     立即执行一次
                                 </button>
                                 <span id="tokenHealthRunStatus" class="status-badge">空闲</span>
-                                <span class="text-sm" style="color: #64748b;">上次完成：<span id="tokenHealthLastRun">无记录</span></span>
+                                <span class="text-sm" style="color: #64748b;">上次完成：<span
+                                        id="tokenHealthLastRun">无记录</span></span>
                             </div>
                             <p id="tokenHealthLastResult" class="text-sm" style="color: #64748b; margin-top: 8px;">
                                 暂无执行记录
@@ -610,14 +641,19 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
 
                         <div class="card" style="background: #f8fafc; border-color: #e2e8f0; margin-top: 24px;">
                             <h4 style="margin-bottom: 12px; color: #1e293b;">安全统计</h4>
-                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
-                                <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;">
+                            <div
+                                style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
+                                <div
+                                    style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;">
                                     <div style="font-size: 0.75rem; color: #64748b;">密码错误次数</div>
-                                    <div style="font-size: 1.5rem; font-weight: 600; color: #1e293b; margin-top: 8px;" id="passwordFailCount">0</div>
+                                    <div style="font-size: 1.5rem; font-weight: 600; color: #1e293b; margin-top: 8px;"
+                                        id="passwordFailCount">0</div>
                                 </div>
-                                <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;">
+                                <div
+                                    style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px;">
                                     <div style="font-size: 0.75rem; color: #64748b;">API Key 错误次数</div>
-                                    <div style="font-size: 1.5rem; font-weight: 600; color: #1e293b; margin-top: 8px;" id="apiKeyFailCount">0</div>
+                                    <div style="font-size: 1.5rem; font-weight: 600; color: #1e293b; margin-top: 8px;"
+                                        id="apiKeyFailCount">0</div>
                                 </div>
                             </div>
                             <div style="margin-top: 16px;">
@@ -634,17 +670,15 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                 <!-- 邮件列表页面 -->
                 <div id="emailsPage" class="page hidden">
                     <div class="card">
-                        <!-- 账户信息和操作按钮 -->
                         <div class="flex items-center justify-between mb-4">
                             <div>
                                 <h3 class="font-semibold">当前账户：
-                                    <span id="currentAccountEmail"
-                                          class="text-sm font-medium email-copyable"
-                                          style="color: #3b82f6; cursor: pointer; position: relative;"
-                                          onclick="copyEmailAddress(this.textContent)"
-                                          title="点击复制邮箱地址">
+                                    <span id="currentAccountEmail" class="text-sm font-medium email-copyable"
+                                        style="color: #3b82f6; cursor: pointer; position: relative;"
+                                        onclick="copyEmailAddress(this.textContent)" title="点击复制邮箱地址">
                                     </span>
-                                    <span class="copy-icon" style="margin-left: 6px; opacity: 0.6; font-size: 0.8em;">📋</span>
+                                    <span class="copy-icon"
+                                        style="margin-left: 6px; opacity: 0.6; font-size: 0.8em;">📋</span>
                                 </h3>
                                 <p class="text-sm" style="color: #64748b;">最后更新：<span id="lastUpdateTime">-</span></p>
                             </div>
@@ -691,7 +725,8 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                         <!-- 搜索和过滤 -->
                         <div class="search-container">
                             <span class="search-icon">🔍</span>
-                            <input type="text" class="search-input" id="emailSearchInput" placeholder="搜索邮件标题、发件人或内容..." onkeyup="searchEmails()">
+                            <input type="text" class="search-input" id="emailSearchInput" placeholder="搜索邮件标题、发件人或内容..."
+                                onkeyup="searchEmails()">
                         </div>
 
                         <div class="filter-container">
@@ -804,7 +839,8 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
             <div class="modal-body">
                 <div class="form-group">
                     <label for="noteTextarea" class="form-label">备注信息</label>
-                    <textarea id="noteTextarea" class="form-input form-textarea" rows="6" placeholder="输入备注内容，支持多行"></textarea>
+                    <textarea id="noteTextarea" class="form-input form-textarea" rows="6"
+                        placeholder="输入备注内容，支持多行"></textarea>
                 </div>
             </div>
             <div class="modal-footer">
@@ -835,10 +871,11 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
         </div>
     </div>
 
-    <script src="/static/js/common.js" defer></script>
-    <script src="/static/js/security.js" defer></script>
-    <script src="/static/js/accounts.js" defer></script>
-    <script src="/static/js/emails.js" defer></script>
-    <script src="/static/js/app.js" defer></script>
+    <script src="/static/js/common.js?v=2" defer></script>
+    <script src="/static/js/security.js?v=2" defer></script>
+    <script src="/static/js/accounts.js?v=2" defer></script>
+    <script src="/static/js/emails.js?v=2" defer></script>
+    <script src="/static/js/app.js?v=2" defer></script>
 </body>
+
 </html>

@@ -59,11 +59,17 @@ class AccountService:
         page_size: int,
         email_search: Optional[str],
         tag_search: Optional[str],
+        include_expired: bool = False,
     ) -> AccountListResponse:
         accounts_data = self._repository.read_all()
         all_accounts: List[AccountInfo] = []
         for email_id, info in accounts_data.items():
             status = info.get("status") or "active"
+            
+            # Filter expired accounts if not requested
+            if status == "expired" and not include_expired:
+                continue
+                
             if not info.get("refresh_token") or not info.get("client_id"):
                 status = "invalid"
             all_accounts.append(
@@ -77,6 +83,12 @@ class AccountService:
             )
 
         filtered = apply_account_filters(all_accounts, email_search, tag_search)
+        
+        # Sort logic: 
+        # 1. Primary: Status (active=0, expired=1) -> Expired accounts at the bottom
+        # 2. Secondary: Email ID (alphabetical) -> Deterministic order
+        filtered.sort(key=lambda x: (1 if x.status == "expired" else 0, x.email_id))
+        
         return build_account_list_response(filtered, page, page_size)
 
     async def register_account(self, credentials: AccountCredentials) -> AccountResponse:

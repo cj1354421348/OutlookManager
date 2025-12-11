@@ -91,6 +91,7 @@ async function loadAccounts(page = 1, resetSearch = false) {
         const params = new URLSearchParams({
             page: window.accountsCurrentPage,
             page_size: window.accountsPageSize,
+            include_expired: 'true',
         });
 
         if (window.accountEmailSearchTerm) {

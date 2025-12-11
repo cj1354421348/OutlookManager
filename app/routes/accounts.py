@@ -22,9 +22,10 @@ async def get_accounts(
     page_size: int = Query(10, ge=1, le=100, description="每页数量，范围1-100"),
     email_search: str | None = Query(None, description="邮箱账号模糊搜索"),
     tag_search: str | None = Query(None, description="标签模糊搜索"),
+    include_expired: bool = Query(False, description="是否包含过期账户"),
     _: None = Depends(require_api_key),
 ) -> AccountListResponse:
-    return account_service.list_accounts(page, page_size, email_search, tag_search)
+    return account_service.list_accounts(page, page_size, email_search, tag_search, include_expired)
 
 
 @router.post("", response_model=AccountResponse)
