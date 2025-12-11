@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import time
+import hashlib
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Dict, Tuple, Any
+from typing import Dict, Tuple, Any, Optional
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -26,6 +27,27 @@ from app.models.schemas import AccountSchema
 from collections import defaultdict
 
 _sync_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="accounts-sync")
+
+
+def calculate_account_hash(data: Dict[str, Any]) -> str:
+    """
+    Calculate SHA256 hash of the account data, excluding volatile fields.
+    """
+    # Create a copy to avoid modifying original
+    clean_data = data.copy()
+    
+    # Remove volatile fields that shoudn't affect the hash
+    # status_updated_at might change on verify but business data is same
+    # last_modified_at is what we are trying to fix/sync, so don't hash it
+    volatile_fields = ["last_modified_at", "status_updated_at", "status_reason", "token_failures"]
+    for field in volatile_fields:
+        clean_data.pop(field, None)
+        
+    # Sort keys for consistent hashing
+    canonical_json = json.dumps(clean_data, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+
 
 
 @dataclass(slots=True)
@@ -78,19 +100,19 @@ class AccountSynchronizer:
             return
 
         with connection.cursor() as cursor:
-            # 检查表是否存在以及是否包含新字段 last_modified_at
+            # 检查表以及 content_hash 列是否存在
             cursor.execute(
                 """
                 SELECT column_name 
                 FROM information_schema.columns 
-                WHERE table_name = %s AND column_name = 'last_modified_at'
+                WHERE table_name = %s AND column_name = 'content_hash'
                 """,
                 (self._table_name,),
             )
             has_new_schema = cursor.fetchone()
 
             if not has_new_schema:
-                logger.warning(f"表 {self._table_name} 结构不匹配或不存在，正在重建...")
+                logger.warning(f"表 {self._table_name} 结构不匹配（缺少 content_hash），正在重建...")
                 # 删除旧表和关联表（如果存在）
                 cursor.execute(f"DROP TABLE IF EXISTS {self._table_name}_tags CASCADE")
                 cursor.execute(f"DROP TABLE IF EXISTS {self._table_name} CASCADE")
@@ -109,6 +131,7 @@ class AccountSynchronizer:
                         tags TEXT,           -- JSON Array
                         note TEXT,
                         last_modified_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                        content_hash VARCHAR(64),
                         is_deleted BOOLEAN DEFAULT FALSE
                     )
                     """
@@ -118,23 +141,24 @@ class AccountSynchronizer:
             
         self._schema_checked = True
 
-    def enqueue_file_to_db(self, accounts: Dict[str, Dict[str, object]], *, source: str = "auto") -> Future | None:
+    def enqueue_file_to_db(self, accounts: Dict[str, Dict[str, object]], *, source: str = "auto", file_mtime: float | None = None) -> Future | None:
         if not self.is_enabled:
             return None
         # Deepcopy to avoid concurrency issues during sync
         snapshot = json.loads(json.dumps(accounts))
-        future = _sync_executor.submit(self.sync_file_to_db, snapshot, source=source)
+        future = _sync_executor.submit(self.sync_file_to_db, snapshot, source=source, file_mtime=file_mtime)
         
         def _callback(fut):
             try:
                 fut.result()
             except Exception as e:
-                logger.error(f"Async sync failed: {e}", exc_info=True)
+                logger.error(f"Async sync failed: (See above for details)")
+                # Exception is already logged in sync_file_to_db usually, or we can log here
                 
         future.add_done_callback(_callback)
         return future
 
-    def sync_file_to_db(self, accounts: Dict[str, Dict[str, object]], *, source: str = "auto") -> SyncReport:
+    def sync_file_to_db(self, accounts: Dict[str, Dict[str, object]], *, source: str = "auto", file_mtime: float | None = None) -> SyncReport:
         """
         PUSH: 将本地更有新意的数据推送到数据库
         """
@@ -143,54 +167,93 @@ class AccountSynchronizer:
 
         added = updated = skipped = 0
         connection = self._connect()
+        from datetime import datetime, timezone
         
         try:
             self._ensure_schema(connection)
             
-            # 获取远程所有账户的时间戳
+            # 获取远程所有账户的摘要信息：Last Modified At 和 Content Hash
             remote_state = {}
             with connection.cursor() as cursor:
-                cursor.execute(f"SELECT email, last_modified_at FROM {self._table_name}")
+                cursor.execute(f"SELECT email, last_modified_at, content_hash FROM {self._table_name}")
                 rows = cursor.fetchall()
                 for row in rows:
-                    if row['last_modified_at']:
-                        # 强制使用东八区格式化，确比较的一致性
-                        dt = row['last_modified_at']
+                    email = row['email']
+                    # Timestamp handling
+                    dt = row['last_modified_at']
+                    if dt and dict(row).get('last_modified_at'):
                         if dt.tzinfo is None:
-                            # 假设 UTC 如果没有时区
                             dt = dt.replace(tzinfo=timezone.utc)
-                        # 统一转为东八区
-                        remote_state[row['email']] = dt.astimezone(TIMEZONE_SHANGHAI).isoformat()
+                        remote_ts = dt.astimezone(TIMEZONE_SHANGHAI).isoformat()
+                    else:
+                        remote_ts = None
+                        
+                    remote_state[email] = {
+                        "ts": remote_ts,
+                        "hash": row.get('content_hash')
+                    }
             
             with connection.cursor() as cursor:
                 for email, local_data in accounts.items():
+                    local_hash = calculate_account_hash(local_data)
                     local_ts_str = local_data.get("last_modified_at")
-                    remote_ts_str = remote_state.get(email)
+                    
+                    remote_info = remote_state.get(email)
+                    remote_ts_str = remote_info["ts"] if remote_info else None
+                    remote_hash = remote_info["hash"] if remote_info else None
+
+                    # 逻辑 1: 处理手动编辑 (Manual Edit Handling)
+                    # 如果提供了 file_mtime，我们需要检查是否以此作为新的时间戳
+                    current_local_ts = local_ts_str
+                    if file_mtime and local_ts_str:
+                        try:
+                            # 如果文件修改时间明显晚于记录的时间戳 (例如 > 60s)
+                            # 这里的 file_mtime 是 UTC timestamp float? os.path.getmtime 是 float seconds
+                            # 我们比较简单点：如果在文件修改时间之后，last_modified_at 还很老，说明可能漏改了
+                            # 但最好只在 hash 不同时才关心这个
+                            if local_hash != remote_hash:
+                                l_dt = parse_iso(local_ts_str)
+                                if l_dt:
+                                    # 将 file_mtime (本地时间戳) 转为 aware datetime
+                                    # os.path.getmtime 返回的是系统本地时间或者UTC? 通常是 epoch seconds
+                                    # python datetime.fromtimestamp(file_mtime) 返回本地时间
+                                    # 我们统一用 UTC 比较
+                                    f_dt = datetime.fromtimestamp(file_mtime).astimezone(timezone.utc)
+                                    l_dt_utc = l_dt.astimezone(timezone.utc)
+                                    
+                                    # 如果文件时间比记录时间晚 10 秒以上
+                                    if (f_dt - l_dt_utc).total_seconds() > 10:
+                                        logger.info(f"Detected potential manual edit for {email}: File Time > Local TS. Using File Time.")
+                                        # 使用文件时间作为新的比较基准 (转为 ISO 字符串)
+                                        # 注意：这里我们只在比较时使用，并没有写回文件（因为这是单向 sync 到 DB）
+                                        # 如果写回 DB，DB 会有更新的时间
+                                        current_local_ts = f_dt.astimezone(TIMEZONE_SHANGHAI).isoformat()
+                                        local_data['last_modified_at'] = current_local_ts # Update in-memory for DB write
+                        except Exception:
+                            pass # 忽略时间比较错误
 
                     # 决定是否更新：
-                    # 1. 远程不存在 -> 插入
-                    # 2. 远程存在，但 Local 更面 -> 更新
-                    
                     should_push = False
+                    action = "skip"
+                    
                     if email not in remote_state:
-                        should_push = True
-                        action = "insert"
-                    elif self._is_newer(local_ts_str, remote_ts_str):
-                        should_push = True
-                        action = "update"
-                    else:
-                        skipped += 1
-                        continue
-
+                         should_push = True
+                         action = "insert"
+                    elif local_hash != remote_hash:
+                        # 内容不同，比较时间戳
+                        if self._is_newer(current_local_ts, remote_ts_str):
+                            should_push = True
+                            action = "update"
+                    
                     if should_push:
-                        logger.debug("PUSH %s: Local (%s) > Remote (%s)", email, local_ts_str, remote_ts_str)
-                        self._upsert_account(cursor, email, local_data)
+                        logger.debug(f"PUSH {email}: Action={action} LocalTS={current_local_ts} RemoteTS={remote_ts_str}")
+                        self._upsert_account(cursor, email, local_data, local_hash)
                         if action == "insert":
                             added += 1
                         else:
                             updated += 1
                     else:
-                        logger.debug("SKIP %s: Local (%s) <= Remote (%s)", email, local_ts_str, remote_ts_str)
+                        # logger.debug(f"SKIP {email}: Hashes Match? {local_hash == remote_hash}")
                         skipped += 1
             
             connection.commit()
@@ -232,19 +295,32 @@ class AccountSynchronizer:
                 local_data = merged_accounts.get(email)
                 local_ts = local_data.get("last_modified_at") if local_data else None
 
+                # 计算 DB 数据的哈希 (需要先转换)
+                # 因为我们只能拿到 raw dict，所以需要模拟转换后的结构来计算 hash 吗?
+                # 不，DB 里有 content_hash 字段了!
+                remote_hash = row.get('content_hash')
+                
+                # Check Local
+                local_data = merged_accounts.get(email)
+                local_ts = local_data.get("last_modified_at") if local_data else None
+                local_hash = calculate_account_hash(local_data) if local_data else None
+
                 # 决定是否拉取：
                 # 1. 本地不存在 -> 拉取
-                # 2. 本地存在，但 Remote 更面 -> 拉取
+                # 2. 本地存在，Hash 不同，且 Remote 更 -> 拉取
+                
+                should_pull = False
                 
                 if email not in merged_accounts:
-                    # New account from DB
-                    merged_accounts[email] = self._row_to_account_data(row)
+                    should_pull = True
                     added += 1
-                    has_changes = True
-                elif self._is_newer(remote_ts, local_ts):
-                    # Remote is newer
+                elif local_hash != remote_hash:
+                     if self._is_newer(remote_ts, local_ts):
+                         should_pull = True
+                         updated += 1
+                
+                if should_pull:
                     merged_accounts[email] = self._row_to_account_data(row)
-                    updated += 1
                     has_changes = True
                 else:
                     skipped += 1
@@ -277,7 +353,7 @@ class AccountSynchronizer:
             logger.warning(f"Error comparing timestamps: {ts1_str} vs {ts2_str}")
             return False
 
-    def _upsert_account(self, cursor, email: str, data: Dict[str, Any]):
+    def _upsert_account(self, cursor, email: str, data: Dict[str, Any], content_hash: str):
         """
         Insert or Update account in DB decomposing the JSON data
         """
@@ -301,11 +377,15 @@ class AccountSynchronizer:
         
         # Ensure we have a timestamp for DB
         last_modified_at = data.get("last_modified_at") or now_str()
+        
+        # Calculate hash if not provided (though it should be)
+        if not content_hash:
+            content_hash = calculate_account_hash(data)
 
         sql = f"""
         INSERT INTO {self._table_name} 
-        (email, data, status, status_updated_at, status_reason, token_failures, tags, note, last_modified_at, is_deleted)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
+        (email, data, status, status_updated_at, status_reason, token_failures, tags, note, last_modified_at, content_hash, is_deleted)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
         ON CONFLICT (email) DO UPDATE SET
             data = EXCLUDED.data,
             status = EXCLUDED.status,
@@ -315,6 +395,7 @@ class AccountSynchronizer:
             tags = EXCLUDED.tags,
             note = EXCLUDED.note,
             last_modified_at = EXCLUDED.last_modified_at,
+            content_hash = EXCLUDED.content_hash,
             is_deleted = FALSE
         """
         
@@ -327,7 +408,8 @@ class AccountSynchronizer:
             token_failures_json,
             tags_json,
             note,
-            last_modified_at
+            last_modified_at,
+            content_hash
         ))
 
     def _row_to_account_data(self, row: dict) -> Dict[str, Any]:

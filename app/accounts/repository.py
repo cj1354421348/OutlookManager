@@ -82,7 +82,11 @@ class AccountRepository:
     def sync_to_database(self, *, source: str = "manual") -> SyncReport:
         synchronizer = self._require_synchronizer()
         accounts = self.read_all()
-        return synchronizer.sync_file_to_db(accounts, source=source)
+        # Get file mtime for manual editing detection
+        mtime = None
+        if self._path.exists():
+            mtime = self._path.stat().st_mtime
+        return synchronizer.sync_file_to_db(accounts, source=source, file_mtime=mtime)
 
     def merge_from_database(self) -> tuple[Dict[str, Dict[str, object]], SyncReport, bool]:
         synchronizer = self._require_synchronizer()
@@ -109,7 +113,11 @@ class AccountRepository:
         if not self._synchronizer or not self._synchronizer.is_enabled:
             return
         try:
-            future = self._synchronizer.enqueue_file_to_db(accounts, source=source)
+            # Get file mtime for manual editing detection (async sync)
+            mtime = None
+            if self._path.exists():
+                mtime = self._path.stat().st_mtime
+            future = self._synchronizer.enqueue_file_to_db(accounts, source=source, file_mtime=mtime)
             if future is None:
                 logger.debug("账户数据库同步未启用，跳过")
         except Exception as exc:  # noqa: BLE001
