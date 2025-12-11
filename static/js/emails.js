@@ -383,22 +383,59 @@ function showEmailsContextMenu(event) {
 function copyEmailAddress(emailAddress) {
     const cleanEmail = (emailAddress || '').trim();
     if (!cleanEmail) {
-        showNotification('邮箱地址为空', 'error');
+        // showNotification('邮箱地址为空', 'error'); // Optional: silence empty clicks
         return;
     }
 
-    navigator.clipboard.writeText(cleanEmail)
-        .then(() => {
-            showNotification(`邮箱地址已复制: ${cleanEmail}`, 'success');
-            const emailElement = document.getElementById('currentAccountEmail');
-            if (emailElement) {
-                emailElement.classList.add('copy-success');
-                setTimeout(() => emailElement.classList.remove('copy-success'), 300);
-            }
-        })
-        .catch(() => {
-            showNotification('复制失败，请手动复制邮箱地址', 'error');
-        });
+    const onSuccess = () => {
+        showNotification(`已复制: ${cleanEmail}`, 'success');
+        const emailElement = document.getElementById('currentAccountEmail');
+        if (emailElement) {
+            emailElement.classList.add('copy-success');
+            setTimeout(() => emailElement.classList.remove('copy-success'), 300);
+        }
+    };
+
+    // Strategy 1: Modern Clipboard API
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(cleanEmail)
+            .then(onSuccess)
+            .catch((err) => {
+                console.warn('Clipboard API failed, falling back to execCommand:', err);
+                fallbackCopy(cleanEmail, onSuccess);
+            });
+    } else {
+        // Strategy 2: Legacy Fallback
+        fallbackCopy(cleanEmail, onSuccess);
+    }
+}
+
+function fallbackCopy(text, onSuccess) {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+
+    // Ensure it's not visible but part of the DOM
+    textArea.style.position = "fixed";
+    textArea.style.left = "-9999px";
+    textArea.style.top = "0";
+
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+
+    try {
+        const successful = document.execCommand('copy');
+        if (successful) {
+            onSuccess();
+        } else {
+            showNotification('复制失败，浏览器可能限制了权限', 'error');
+        }
+    } catch (err) {
+        showNotification('无法复制，请手动操作', 'error');
+        console.error('Fallback copy failed:', err);
+    }
+
+    document.body.removeChild(textArea);
 }
 
 // 事件绑定

@@ -341,7 +341,8 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                                     <div class="api-section">
                                         <h4>认证方式</h4>
                                         <p class="api-description">登录后使用服务器返回的会话 Cookie，并在请求头中附加
-                                            <code>Authorization: Key &lt;API_KEY&gt;</code>。</p>
+                                            <code>Authorization: Key &lt;API_KEY&gt;</code>。
+                                        </p>
                                     </div>
                                     <div class="api-section">
                                         <h4>响应格式</h4>
@@ -678,7 +679,9 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                                         onclick="copyEmailAddress(this.textContent)" title="点击复制邮箱地址">
                                     </span>
                                     <span class="copy-icon"
-                                        style="margin-left: 6px; opacity: 0.6; font-size: 0.8em;">📋</span>
+                                        style="margin-left: 6px; opacity: 0.6; font-size: 0.8em; cursor: pointer;"
+                                        onclick="copyEmailAddress(document.getElementById('currentAccountEmail').textContent)"
+                                        title="点击复制">📋</span>
                                 </h3>
                                 <p class="text-sm" style="color: #64748b;">最后更新：<span id="lastUpdateTime">-</span></p>
                             </div>
