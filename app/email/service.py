@@ -40,7 +40,7 @@ class EmailService:
         try:
             access_token = await fetch_access_token(credentials)
         except HTTPException as exc:
-            if exc.status_code in {401}:
+            if exc.status_code in {400, 401}:
                 account_service.record_token_failure(
                     credentials.email,
                     status_code=exc.status_code,

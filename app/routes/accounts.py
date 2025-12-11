@@ -61,6 +61,14 @@ async def delete_account(
     return account_service.delete_account(email_id)
 
 
+@router.post("/{email_id}/reset-status", response_model=AccountResponse)
+async def reset_account_status(
+    email_id: str,
+    _: None = Depends(require_api_key),
+) -> AccountResponse:
+    return account_service.reset_account_status(email_id)
+
+
 @router.post("/sync/push", response_model=SyncResult)
 async def sync_accounts_to_database(
     _: None = Depends(require_api_key),

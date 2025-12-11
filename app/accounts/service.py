@@ -7,8 +7,7 @@ from fastapi import HTTPException
 
 from app.config import (
     ACCOUNTS_FILE,
-    TOKEN_FAILURE_THRESHOLD,
-    TOKEN_FAILURE_WINDOW_HOURS,
+    ACCOUNTS_FILE,
     logger
 )
 from app.core.time_utils import now, now_str, TIMEZONE_SHANGHAI
@@ -32,7 +31,7 @@ from .tagging import update_account_tags
 
 
 # 使用配置文件中的阈值设置
-TOKEN_FAILURE_WINDOW = timedelta(hours=TOKEN_FAILURE_WINDOW_HOURS)
+
 
 
 class AccountService:
@@ -116,6 +115,15 @@ class AccountService:
         self._repository.delete_account(email_id)
         return AccountResponse(email_id=email_id, message="Account deleted successfully.")
 
+    def reset_account_status(self, email_id: str) -> AccountResponse:
+        """
+        Manually reset account status to active and clear failure counters.
+        Used to 'resurrect' expired accounts.
+        """
+        self.record_token_success(email_id)
+        logger.info("Account %s status manually reset to active", email_id)
+        return AccountResponse(email_id=email_id, message="账户状态已重置为正常")
+
     def sync_local_to_remote(self) -> SyncReport:
         synchronizer = self._require_synchronizer()
         return push_accounts_to_database(self._repository, synchronizer)
@@ -131,43 +139,63 @@ class AccountService:
 
     def record_token_failure(self, email_id: str, *, status_code: int | None = None, error_message: str | None = None, operation: str = "token_request") -> None:
         status_marked_expired = False
-        failure_count = 0
-        first_failure_at = None
+        consecutive_failures = 0
+        failure_threshold = 8  # Default value
 
         def mutate(entry: Dict[str, object]) -> bool:
-            nonlocal status_marked_expired, failure_count, first_failure_at
-            current_time = now()
+            nonlocal status_marked_expired, consecutive_failures, failure_threshold
             current_time_str = now_str()
 
             failures = dict(entry.get("token_failures") or {})
+            
+            # 1. Determine threshold based on error type
+            # Auth errors (400/401/403) are more critical -> 3 strikes
+            # Network errors etc. are lenient -> 8 strikes
+            if status_code in (400, 401, 403):
+                failure_threshold = 3
+            else:
+                failure_threshold = 8
 
-            first_ts = failures.get("first_failure_at")
-            first_dt = self._parse_timestamp(first_ts)
-            if not first_dt:
-                first_dt = current_time
-                failures["first_failure_at"] = current_time_str
-
+            # 2. Increment consecutive failure count
+            # Note: Successes clear this entire structure, so existing count is always consecutive
+            current_count = int(failures.get("consecutive_count", 0))
+            new_count = current_count + 1
+            
+            failures["consecutive_count"] = new_count
             failures["last_failure_at"] = current_time_str
-            failures["count"] = int(failures.get("count", 0)) + 1
+            
             if status_code is not None:
                 failures["last_status_code"] = status_code
             if error_message:
                 failures["last_error_message"] = error_message
 
+            consecutive_failures = new_count
+
+            # 3. Check threshold
+            if new_count >= failure_threshold:
+                if entry.get("status") != "expired":
+                    entry["status"] = "expired"
+                    entry["status_reason"] = "token_expired"
+                    entry["status_updated_at"] = current_time_str
+                    status_marked_expired = True
+
             entry["token_failures"] = failures
+            return True
+
+        self._update_account_entry(email_id, mutate)
+
         log_token_failure(
             email=email_id,
-            failure_count=failure_count,
-            threshold=TOKEN_FAILURE_THRESHOLD,
-            first_failure_at=first_failure_at,
-            window_duration=TOKEN_FAILURE_WINDOW,
+            failure_count=consecutive_failures,
+            threshold=failure_threshold,
             status_code=status_code,
             error_message=error_message,
             operation=operation
         )
 
         if status_marked_expired:
-            logger.warning("Account %s marked as expired due to repeated token failures", email_id)
+            logger.warning("Account %s marked as expired due to %d consecutive failures (threshold: %d)", 
+                           email_id, consecutive_failures, failure_threshold)
 
     def record_token_success(self, email_id: str) -> None:
         def mutate(entry: Dict[str, object]) -> bool:
@@ -190,16 +218,7 @@ class AccountService:
         self._update_account_entry(email_id, mutate)
 
     def _update_account_entry(self, email_id: str, mutator: Callable[[Dict[str, object]], bool]) -> None:
-        accounts = self._repository.read_all()
-        if email_id not in accounts:
-            logger.warning("Account %s not found when attempting to update state", email_id)
-            return
-
-        current = dict(accounts[email_id])
-        if not mutator(current):
-            return
-
-        self._repository.save_account(email_id, current)
+        self._repository.update_account(email_id, mutator)
 
     @staticmethod
     def _parse_timestamp(value: object) -> datetime | None:

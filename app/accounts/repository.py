@@ -4,7 +4,7 @@ import json
 import threading
 from contextlib import suppress
 from pathlib import Path
-from typing import Dict
+from typing import Callable, Dict
 
 from fastapi import HTTPException
 from filelock import FileLock
@@ -48,6 +48,27 @@ class AccountRepository:
             accounts[email_id] = data
             self._write_to_disk_locked(accounts)
         self._sync_to_database(accounts, source="mutation")
+
+    def update_account(self, email_id: str, mutator: Callable[[Dict[str, object]], bool]) -> None:
+        """
+        Atomic update of an account using a mutator function.
+        Accesses the latest data under lock, applies mutation, and writes back if changed.
+        """
+        with self._lock:
+            accounts = self.read_all()
+            if email_id not in accounts:
+                logger.warning("Attempted to update non-existent account: %s", email_id)
+                return
+
+            account_data = accounts[email_id]
+            should_save = mutator(account_data)
+            
+            if should_save:
+                account_data["last_modified_at"] = now_str()
+                self._write_to_disk_locked(accounts)
+        
+        if should_save:
+            self._sync_to_database(accounts, source="mutation")
 
     def delete_account(self, email_id: str) -> None:
         with self._lock:

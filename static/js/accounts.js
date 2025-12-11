@@ -140,6 +140,9 @@ function createAccountItem(account) {
         ? `showExpiredAccountNotice('${safeEmail}')`
         : `viewAccountEmails('${safeEmail}')`;
     const viewButtonContent = isExpired ? '<span>⚠️</span> 授权过期' : '<span>📧</span> 查看邮件';
+    const resetButtonHtml = isExpired
+        ? `<button class="btn btn-warning btn-sm" onclick="resetAccountStatus('${safeEmail}')" title="重置状态为正常 (Reset Status)"><span>🔄</span> 重置状态</button>`
+        : '';
     let notePreview = '';
     if (typeof account.note === 'string' && account.note.trim()) {
         const normalisedNote = account.note.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -167,6 +170,7 @@ function createAccountItem(account) {
                 <button class="btn btn-primary btn-sm" onclick="${viewButtonAction}">
                     ${viewButtonContent}
                 </button>
+                ${resetButtonHtml}
                 <button class="btn btn-secondary btn-sm" onclick="editAccountTags('${safeEmail}', ${tagsPayload})">
                     <span>🏷️</span>
                     管理标签
@@ -670,6 +674,20 @@ async function deleteAccount(emailId) {
     }
 }
 
+async function resetAccountStatus(emailId) {
+    if (!confirm(`确定要重置账户 ${emailId} 的状态为正常吗？\n(这将清除失败计数并尝试重新恢复使用)`)) {
+        return;
+    }
+
+    try {
+        const response = await apiRequest(`/accounts/${emailId}/reset-status`, { method: 'POST' });
+        showNotification(response?.message || '账户状态已重置', 'success');
+        loadAccounts(window.accountsCurrentPage);
+    } catch (error) {
+        showNotification(`重置状态失败: ${error.message}`, 'error');
+    }
+}
+
 function showAccountContextMenu(event, emailId) {
     event.preventDefault();
     event.stopPropagation();
@@ -764,3 +782,4 @@ window.editAccountNote = editAccountNote;
 window.closeNoteModal = closeNoteModal;
 window.saveAccountNote = saveAccountNote;
 window.showExpiredAccountNotice = showExpiredAccountNotice;
+window.resetAccountStatus = resetAccountStatus;

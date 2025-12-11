@@ -49,6 +49,13 @@ class TokenHealthService:
 
         for email in accounts.keys():
             result.total += 1
+            
+            # Check status first
+            account_data = accounts[email]
+            if account_data.get("status") == "expired":
+                logger.info("Skipping token check for expired account: %s", email)
+                continue
+
             try:
                 credentials = get_account_credentials(self._repository, email, accounts=accounts)
             except HTTPException as exc:
