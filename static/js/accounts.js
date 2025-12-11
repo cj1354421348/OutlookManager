@@ -425,7 +425,8 @@ async function batchAddAccounts() {
         const p4 = parts[3];
         let refreshToken, clientId;
 
-        if (p3.length === 36 && p4.length > 36) {
+        // Format detection: Client ID (short) vs Refresh Token (long)
+        if (p3.length < p4.length) {
             // Format: email----pass----client_id----refresh_token
             clientId = p3;
             refreshToken = p4;
