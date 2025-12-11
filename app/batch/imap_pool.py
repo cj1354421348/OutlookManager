@@ -5,6 +5,8 @@ import imaplib
 import socket
 from queue import Empty, Queue
 
+from app.infrastructure.imap import LoggedIMAP4_SSL
+
 from .config import CONNECTION_TIMEOUT, IMAP_PORT, IMAP_SERVER, MAX_CONNECTIONS, SOCKET_TIMEOUT, logger
 
 
@@ -19,7 +21,7 @@ class IMAPConnectionPool:
     async def _create_connection(self, email: str, access_token: str) -> imaplib.IMAP4_SSL:
         try:
             socket.setdefaulttimeout(SOCKET_TIMEOUT)
-            imap_client = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
+            imap_client = LoggedIMAP4_SSL(IMAP_SERVER, IMAP_PORT, email_account=email)
             imap_client.sock.settimeout(CONNECTION_TIMEOUT)
             auth_string = f"user={email}\x01auth=Bearer {access_token}\x01\x01".encode("utf-8")
             imap_client.authenticate("XOAUTH2", lambda _: auth_string)

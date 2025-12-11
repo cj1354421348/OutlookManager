@@ -8,6 +8,74 @@ from queue import Empty, Queue
 from app.config import CONNECTION_TIMEOUT, IMAP_PORT, IMAP_SERVER, MAX_CONNECTIONS, SOCKET_TIMEOUT, logger
 
 
+import time
+from app.core.traffic_logger import traffic_logger
+
+class LoggedIMAP4_SSL(imaplib.IMAP4_SSL):
+    def __init__(self, host, port, email_account="unknown"):
+        self._email_account = email_account
+        super().__init__(host, port)
+
+    def _log_cmd(self, name, *args):
+        # Override internals if needed, but easier to wrap public methods
+        pass
+
+    def select(self, mailbox='INBOX', readonly=False):
+        start = time.monotonic()
+        try:
+            status, data = super().select(mailbox, readonly)
+            duration = (time.monotonic() - start) * 1000
+            traffic_logger.log("IMAP", self._email_account, f"SELECT {mailbox}", status, duration)
+            return status, data
+        except Exception as e:
+            duration = (time.monotonic() - start) * 1000
+            traffic_logger.log("IMAP", self._email_account, f"SELECT {mailbox}", "ERROR", duration, str(e))
+            raise
+
+    def search(self, charset, *criteria):
+        start = time.monotonic()
+        crit_str = " ".join(str(c) for c in criteria)
+        try:
+            status, data = super().search(charset, *criteria)
+            duration = (time.monotonic() - start) * 1000
+            count = 0
+            if status == "OK" and data and data[0]:
+                count = len(data[0].split())
+            traffic_logger.log("IMAP", self._email_account, f"SEARCH {crit_str}", status, duration, f"Found {count} msgs")
+            return status, data
+        except Exception as e:
+            duration = (time.monotonic() - start) * 1000
+            traffic_logger.log("IMAP", self._email_account, f"SEARCH {crit_str}", "ERROR", duration, str(e))
+            raise
+
+    def fetch(self, message_set, message_parts):
+        start = time.monotonic()
+        try:
+            status, data = super().fetch(message_set, message_parts)
+            duration = (time.monotonic() - start) * 1000
+            # Clean up message_parts string for logging (truncate if too long)
+            parts_summary = str(message_parts)[:50] + "..." if len(str(message_parts)) > 50 else str(message_parts)
+            traffic_logger.log("IMAP", self._email_account, f"FETCH {str(message_set)[:20]} {parts_summary}", status, duration)
+            return status, data
+        except Exception as e:
+            duration = (time.monotonic() - start) * 1000
+            traffic_logger.log("IMAP", self._email_account, f"FETCH {str(message_set)[:20]}", "ERROR", duration, str(e))
+            raise
+            
+    def authenticate(self, mechanism, authobject):
+        start = time.monotonic()
+        try:
+            # Mask auth object in logs
+            res = super().authenticate(mechanism, authobject)
+            duration = (time.monotonic() - start) * 1000
+            traffic_logger.log("IMAP", self._email_account, f"AUTHENTICATE {mechanism}", "OK", duration)
+            return res
+        except Exception as e:
+            duration = (time.monotonic() - start) * 1000
+            traffic_logger.log("IMAP", self._email_account, f"AUTHENTICATE {mechanism}", "ERROR", duration, str(e))
+            raise
+
+
 class IMAPConnectionPool:
     def __init__(self, max_connections: int = MAX_CONNECTIONS) -> None:
         self.max_connections = max_connections
@@ -19,7 +87,8 @@ class IMAPConnectionPool:
     def _create_connection(self, email: str, access_token: str) -> imaplib.IMAP4_SSL:
         try:
             socket.setdefaulttimeout(SOCKET_TIMEOUT)
-            client = imaplib.IMAP4_SSL(IMAP_SERVER, IMAP_PORT)
+            # Use our intercepted class
+            client = LoggedIMAP4_SSL(IMAP_SERVER, IMAP_PORT, email_account=email)
             client.sock.settimeout(CONNECTION_TIMEOUT)
             auth_string = f"user={email}\x01auth=Bearer {access_token}\x01\x01".encode("utf-8")
             client.authenticate("XOAUTH2", lambda _: auth_string)

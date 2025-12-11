@@ -56,8 +56,13 @@ function showPage(pageName, targetElement = null) {
         case 'emails':
             loadEmails();
             break;
+        case 'traffic':
+            if (typeof initTrafficPage === 'function') {
+                initTrafficPage();
+            }
+            break;
         case 'settings':
-            refreshSecurityInfo().catch(() => {});
+            refreshSecurityInfo().catch(() => { });
             break;
         default:
             break;
@@ -251,6 +256,31 @@ async function initializeApp() {
 
         const hasHash = window.location.hash && window.location.hash !== '#';
         if (window.currentApiKey) {
+            // 启动全局日志记录
+            if (typeof startGlobalTrafficStream === 'function') {
+                startGlobalTrafficStream();
+
+                // Load history here once
+                fetch('/api/traffic/history?limit=100', {
+                    headers: { 'Authorization': `Key ${window.currentApiKey}` }
+                })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (window.trafficLogs) {
+                            // Merge history avoiding duplicates if stream started
+                            const ids = new Set(window.trafficLogs.map(l => l.id));
+                            data.forEach(entry => {
+                                if (!ids.has(entry.id)) {
+                                    window.trafficLogs.push(entry);
+                                }
+                            });
+                            // Sort by timestamp desc
+                            window.trafficLogs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                        }
+                    })
+                    .catch(e => console.error("Initial history load failed", e));
+            }
+
             if (hasHash) {
                 handleUrlRouting();
             } else {

@@ -1,0 +1,265 @@
+/* Traffic Log - Modern Table Design */
+.traffic-wrapper {
+    max-height: calc(100vh - 250px);
+    overflow-y: auto;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    background: #ffffff;
+}
+
+.traffic-log-table {
+    width: 100%;
+    border-collapse: collapse;
+    border-spacing: 0;
+}
+
+/* 表头样式 */
+.traffic-log-table thead {
+    background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.traffic-log-table th {
+    padding: 14px 16px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #475569;
+    text-align: left;
+    border-bottom: 2px solid #cbd5e1;
+    white-space: nowrap;
+}
+
+.traffic-log-table th:first-child {
+    padding-left: 20px;
+}
+
+.traffic-log-table th:last-child {
+    padding-right: 20px;
+}
+
+/* 表格主体 */
+.traffic-log-table tbody tr {
+    transition: all 0.2s ease;
+    border-bottom: 1px solid #f1f5f9;
+}
+
+/* 斑马条纹 */
+.traffic-log-table tbody tr:nth-child(even) {
+    background-color: #f8fafc;
+}
+
+.traffic-log-table tbody tr:hover {
+    background-color: #eff6ff !important;
+    box-shadow: inset 0 0 0 1px #3b82f6;
+    cursor: pointer;
+}
+
+.traffic-log-table td {
+    padding: 12px 16px;
+    font-size: 0.8125rem;
+    color: #334155;
+    vertical-align: middle;
+}
+
+.traffic-log-table td:first-child {
+    padding-left: 20px;
+}
+
+.traffic-log-table td:last-child {
+    padding-right: 20px;
+}
+
+/* 列样式 */
+.th-time,
+.td-time {
+    width: 130px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.75rem;
+    color: #64748b;
+}
+
+.th-protocol,
+.td-protocol {
+    width: 100px;
+    text-align: center;
+}
+
+.th-account,
+.td-account {
+    width: 200px;
+    font-weight: 500;
+}
+
+.th-action,
+.td-action {
+    width: 180px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.8125rem;
+}
+
+.th-status,
+.td-status {
+    width: 100px;
+    text-align: center;
+}
+
+.th-duration,
+.td-duration {
+    width: 110px;
+    text-align: right;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    font-size: 0.75rem;
+    color: #64748b;
+}
+
+.th-details,
+.td-details {
+    min-width: 200px;
+    max-width: 400px;
+    color: #64748b;
+}
+
+/* 协议徽章 */
+.protocol-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 16px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.protocol-badge.badge-http {
+    background: #dbeafe;
+    color: #1e40af;
+    border: 1px solid #93c5fd;
+}
+
+.protocol-badge.badge-imap {
+    background: #fce7f3;
+    color: #9d174d;
+    border: 1px solid #f9a8d4;
+}
+
+.protocol-badge::before {
+    content: '●';
+    font-size: 0.5rem;
+}
+
+/* 状态徽章 */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 12px;
+    border-radius: 16px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.status-badge.badge-ok {
+    background: #dcfce7;
+    color: #166534;
+    border: 1px solid #86efac;
+}
+
+.status-badge.badge-error {
+    background: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #fca5a5;
+}
+
+.status-badge::before {
+    content: '●';
+    font-size: 0.5rem;
+    margin-right: 4px;
+}
+
+.status-badge.badge-ok::before {
+    color: #22c55e;
+}
+
+.status-badge.badge-error::before {
+    color: #ef4444;
+}
+
+/* 详情单元格 */
+.td-details {
+    position: relative;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.td-details:hover {
+    white-space: normal;
+    overflow: visible;
+    z-index: 1;
+}
+
+/* 空状态 */
+.traffic-empty {
+    text-align: center;
+    padding: 80px 20px;
+    color: #94a3b8;
+}
+
+.traffic-empty::before {
+    content: '📊';
+    font-size: 4rem;
+    display: block;
+    margin-bottom: 16px;
+    opacity: 0.3;
+}
+
+.traffic-empty-text {
+    font-size: 0.875rem;
+    margin-bottom: 8px;
+}
+
+.traffic-empty-hint {
+    font-size: 0.75rem;
+    color: #cbd5e1;
+}
+
+/* 滚动条美化 */
+.traffic-wrapper::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.traffic-wrapper::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 4px;
+}
+
+.traffic-wrapper::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+}
+
+.traffic-wrapper::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
+/* 动画 */
+@keyframes fadeInSlide {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.traffic-log-table tbody tr {
+    animation: fadeInSlide 0.3s ease-out;
+}

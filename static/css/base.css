@@ -13,6 +13,21 @@ body {
     height: 100vh;
 }
 
+/* Traffic Log Styles */
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+}
+.status-dot.online { background-color: #22c55e; box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2); }
+.status-dot.offline { background-color: #ef4444; }
+
+.badge.protocol-http { background-color: #dbeafe; color: #1e40af; }
+.badge.protocol-imap { background-color: #fce7f3; color: #9d174d; }
+.badge.status-ok { background-color: #dcfce7; color: #166534; }
+.badge.status-error { background-color: #fee2e2; color: #991b1b; }
+
 /* 左侧菜单 */
 .sidebar {
     width: 180px;

@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="/static/css/base.css">
     <link rel="stylesheet" href="/static/css/forms.css">
     <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/traffic.css">
     <link rel="stylesheet" href="/static/css/responsive.css">
 </head>
 
@@ -39,6 +40,10 @@
                 <button class="nav-item" onclick="showPage('settings', this)">
                     <span class="icon">⚙️</span>
                     安全设置
+                </button>
+                <button class="nav-item" onclick="showPage('traffic', this)">
+                    <span class="icon">📊</span>
+                    请求日志
                 </button>
                 <button class="nav-item" onclick="showPage('emails', this)" oncontextmenu="showEmailsContextMenu(event)"
                     id="emailsNav" style="display: none;">
@@ -668,6 +673,55 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
                     </div>
                 </div>
 
+                <!-- 请求日志页面 -->
+                <div id="trafficPage" class="page hidden">
+                    <div class="card" style="max-width: 100%;">
+                        <div class="flex items-center justify-between mb-4">
+                            <div>
+                                <h3 class="font-semibold">📡 实时请求日志</h3>
+                                <div class="flex items-center gap-2 mt-2">
+                                    <span id="trafficStatusIndicator" class="status-dot offline"></span>
+                                    <span id="trafficStatusText" class="text-xs" style="color: #64748b;">正在连接...</span>
+                                </div>
+                            </div>
+                            <div class="flex gap-2">
+                                <div class="filter-group" style="margin-right: 8px;">
+                                    <label class="filter-label" style="margin: 0;">协议:</label>
+                                    <select class="filter-select" id="protocolFilter"
+                                        onchange="filterByProtocol(this.value)" style="min-width: 100px;">
+                                        <option value="all">全部</option>
+                                        <option value="HTTP">HTTP</option>
+                                        <option value="IMAP">IMAP</option>
+                                    </select>
+                                </div>
+                                <button class="btn btn-secondary btn-sm"
+                                    onclick="window.trafficLogs=[]; renderTrafficLogs();">
+                                    <span>🗑️</span> 清空
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="traffic-wrapper">
+                            <table class="traffic-log-table">
+                                <thead>
+                                    <tr>
+                                        <th class="th-time">⏰ 时间</th>
+                                        <th class="th-protocol">协议</th>
+                                        <th class="th-account">👤 账户</th>
+                                        <th class="th-action">动作</th>
+                                        <th class="th-status">状态</th>
+                                        <th class="th-duration">⚡ 耗时</th>
+                                        <th class="th-details">详情</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="trafficTableBody">
+                                    <!-- 日志行将在这里动态添加 -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- 邮件列表页面 -->
                 <div id="emailsPage" class="page hidden">
                     <div class="card">
@@ -875,10 +929,12 @@ example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
     </div>
 
     <script src="/static/js/common.js?v=2" defer></script>
-    <script src="/static/js/security.js?v=2" defer></script>
-    <script src="/static/js/accounts.js?v=2" defer></script>
-    <script src="/static/js/emails.js?v=2" defer></script>
-    <script src="/static/js/app.js?v=2" defer></script>
+    <script src="/static/js/common.js"></script>
+    <script src="/static/js/security.js"></script>
+    <script src="/static/js/accounts.js"></script>
+    <script src="/static/js/emails.js"></script>
+    <script src="/static/js/traffic.js"></script>
+    <script src="/static/js/app.js"></script>
 </body>
 
 </html>

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from . import accounts, auth, cache, emails, web
+from . import accounts, auth, cache, emails, web, traffic
 
 routers: list[APIRouter] = [
     auth.router,
@@ -10,6 +10,7 @@ routers: list[APIRouter] = [
     emails.router,
     cache.router,
     web.router,
+    traffic.router,
 ]
 
 __all__ = ["routers"]
