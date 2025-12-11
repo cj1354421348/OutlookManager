@@ -415,12 +415,27 @@ async function batchAddAccounts() {
             results.push({
                 email: parts[0] || '格式错误',
                 status: 'error',
-                message: '格式错误：应为 邮箱----密码----刷新令牌----客户端ID',
+                message: '格式错误：需包含4列 (邮箱----密码----[Token/ClientID]----[Token/ClientID])',
             });
             continue;
         }
 
-        const [email, , refreshToken, clientId] = parts;
+        // Auto-detect format based on client_id length (UUID = 36 chars)
+        const p3 = parts[2];
+        const p4 = parts[3];
+        let refreshToken, clientId;
+
+        if (p3.length === 36 && p4.length > 36) {
+            // Format: email----pass----client_id----refresh_token
+            clientId = p3;
+            refreshToken = p4;
+        } else {
+            // Format: email----pass----refresh_token----client_id (Default)
+            refreshToken = p3;
+            clientId = p4;
+        }
+
+        const email = parts[0];
 
         try {
             await apiRequest('/accounts', {
@@ -429,7 +444,7 @@ async function batchAddAccounts() {
                     email,
                     refresh_token: refreshToken,
                     client_id: clientId,
-                }),
+                }), // tags removed from body as it is not in the destructuring
             });
             successCount += 1;
             results.push({ email, status: 'success', message: '添加成功' });
