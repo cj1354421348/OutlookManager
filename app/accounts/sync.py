@@ -187,7 +187,7 @@ class AccountSynchronizer:
                                 dt = dt.replace(tzinfo=timezone.utc)
                             except Exception:
                                 pass
-                        remote_ts = dt.astimezone(TIMEZONE_SHANGHAI).isoformat()
+                        remote_ts = dt.astimezone().isoformat()
                     else:
                         remote_ts = None
                         
@@ -225,7 +225,7 @@ class AccountSynchronizer:
                                     # 如果文件时间比记录时间晚 10 秒以上
                                     if (f_dt_utc - l_dt_utc).total_seconds() > 10:
                                         logger.info(f"Detected potential manual edit for {email}: File Time > Local TS. Using File Time.")
-                                        current_local_ts = f_dt.astimezone(TIMEZONE_SHANGHAI).isoformat()
+                                        current_local_ts = f_dt.astimezone().isoformat()
                                         local_data['last_modified_at'] = current_local_ts
                         except Exception:
                             pass # 忽略时间比较错误
@@ -449,13 +449,13 @@ class AccountSynchronizer:
             dt = row['last_modified_at']
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
-            data['last_modified_at'] = dt.astimezone(TIMEZONE_SHANGHAI).isoformat()
+            data['last_modified_at'] = dt.astimezone().isoformat()
             
         if row['status_updated_at']:
              dt = row['status_updated_at']
              if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
-             data['status_updated_at'] = dt.astimezone(TIMEZONE_SHANGHAI).isoformat()
+             data['status_updated_at'] = dt.astimezone().isoformat()
             
         # 补全可能缺失的字段以匹配 Schema (Optional)
         return data
