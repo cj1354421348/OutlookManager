@@ -100,8 +100,7 @@ class AccountSynchronizer:
             return
 
         with connection.cursor() as cursor:
-            # 检查表以及 password, content_hash 列是否存在
-            # 我们检查 password 列是否存在来决定是否由于 Schema 变更需要重建
+            # 检查主表是否存在
             cursor.execute(
                 """
                 SELECT column_name 
@@ -112,14 +111,26 @@ class AccountSynchronizer:
             )
             has_new_schema = cursor.fetchone()
 
-            if not has_new_schema:
-                logger.warning(f"表 {self._table_name} 结构不匹配（缺少 password 列），正在重建...")
-                # 删除旧表和关联表（如果存在）
+            # 再次检查是否还存在 content_hash 列 (如果存在说明不是最新 Schema)
+            cursor.execute(
+                """
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = %s AND column_name = 'content_hash'
+                """,
+                (self._table_name,),
+            )
+            has_content_hash = cursor.fetchone()
+
+            if not has_new_schema or has_content_hash:
+                logger.warning(f"表 {self._table_name} 结构不匹配（缺少 password 或 存在旧 content_hash），正在重建...")
+                # 删除旧表
                 cursor.execute(f"DROP TABLE IF EXISTS {self._table_name}_tags CASCADE")
                 cursor.execute(f"DROP TABLE IF EXISTS {self._table_name} CASCADE")
+                # 删除关联的历史表(如果有)
+                cursor.execute(f"DROP TABLE IF EXISTS {self._table_name}_history CASCADE")
 
                 # 创建新表
-                # data 字段只存 refresh_token 和 client_id (密码分离)
                 cursor.execute(
                     f"""
                     CREATE TABLE {self._table_name} (
@@ -133,14 +144,89 @@ class AccountSynchronizer:
                         tags TEXT,           -- JSON Array
                         note TEXT,
                         last_modified_at TIMESTAMP WITH TIME ZONE NOT NULL,
-                        content_hash VARCHAR(64),
+                        -- content_hash REMOVED
                         is_deleted BOOLEAN DEFAULT FALSE
                     )
                     """
                 )
                 connection.commit()
                 logger.info(f"表 {self._table_name} 重建完成")
+
+            # 检查并创建历史表 (无论主表是否重建，都检查历史表)
+            cursor.execute(
+                """
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_name = %s
+                """,
+                (f"{self._table_name}_history",),
+            )
+            has_history_table = cursor.fetchone()
+
+            if not has_history_table:
+                logger.info(f"创建历史表 {self._table_name}_history...")
+                cursor.execute(
+                    f"""
+                    CREATE TABLE {self._table_name}_history (
+                        id SERIAL PRIMARY KEY,
+                        original_email VARCHAR(255),
+                        backup_timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        backup_reason VARCHAR(50),
+                        
+                        password TEXT,
+                        data TEXT,
+                        status VARCHAR(50),
+                        status_updated_at TIMESTAMP WITH TIME ZONE,
+                        status_reason TEXT,
+                        token_failures TEXT,
+                        tags TEXT,
+                        note TEXT,
+                        last_modified_at TIMESTAMP WITH TIME ZONE,
+                        -- content_hash REMOVED
+                        is_deleted BOOLEAN
+                    )
+                    """
+                )
+                connection.commit()
             
+            # 如果历史表存在，但包含 content_hash 列，也应该重建历史表以保持一致
+            # 简单起见，这里依赖主表重建触发的级联删除，或者假设历史表结构随之更新。
+            # 鉴于用户已允许数据变动，我们可以检查历史表是否有 content_hash，如果有则重建
+            cursor.execute(
+                """
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = %s AND column_name = 'content_hash'
+                """,
+                (f"{self._table_name}_history",),
+            )
+            has_history_hash = cursor.fetchone()
+            if has_history_hash:
+                 logger.warning(f"历史表 {self._table_name}_history 包含旧列 content_hash，重建中...")
+                 cursor.execute(f"DROP TABLE IF EXISTS {self._table_name}_history CASCADE")
+                 cursor.execute(
+                    f"""
+                    CREATE TABLE {self._table_name}_history (
+                        id SERIAL PRIMARY KEY,
+                        original_email VARCHAR(255),
+                        backup_timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        backup_reason VARCHAR(50),
+                        
+                        password TEXT,
+                        data TEXT,
+                        status VARCHAR(50),
+                        status_updated_at TIMESTAMP WITH TIME ZONE,
+                        status_reason TEXT,
+                        token_failures TEXT,
+                        tags TEXT,
+                        note TEXT,
+                        last_modified_at TIMESTAMP WITH TIME ZONE,
+                        is_deleted BOOLEAN
+                    )
+                    """
+                )
+                 connection.commit()
+
         self._schema_checked = True
 
     def enqueue_file_to_db(self, accounts: Dict[str, Dict[str, object]], *, source: str = "auto", file_mtime: float | None = None) -> Future | None:
@@ -162,96 +248,57 @@ class AccountSynchronizer:
 
     def sync_file_to_db(self, accounts: Dict[str, Dict[str, object]], *, source: str = "auto", file_mtime: float | None = None) -> SyncReport:
         """
-        PUSH: 将本地更有新意的数据推送到数据库
+        PUSH: 将本地数据推送到数据库 (Force Sync + Backup)
+        逻辑：实时计算Hash -> Hash 不同 -> 备份 DB 记录 -> 强制覆盖
         """
         if not self.is_enabled:
             raise RuntimeError("Database not configured")
 
         added = updated = skipped = 0
         connection = self._connect()
-        from datetime import timezone
         
         try:
             self._ensure_schema(connection)
             
-            # 获取远程所有账户的摘要信息：Last Modified At 和 Content Hash
+            # 获取远程所有账户的完整信息 (用于计算实时 Hash)
+            # 不再读取 content_hash 列
             remote_state = {}
             with connection.cursor() as cursor:
-                cursor.execute(f"SELECT email, last_modified_at, content_hash FROM {self._table_name}")
+                cursor.execute(f"SELECT * FROM {self._table_name} WHERE is_deleted = FALSE")
                 rows = cursor.fetchall()
                 for row in rows:
-                    email = row['email']
-                    # Timestamp handling
-                    dt = row['last_modified_at']
-                    if dt and dict(row).get('last_modified_at'):
-                        if dt.tzinfo is None:
-                            try:
-                                dt = dt.replace(tzinfo=timezone.utc)
-                            except Exception:
-                                pass
-                        remote_ts = dt.astimezone().isoformat()
-                    else:
-                        remote_ts = None
-                        
-                    remote_state[email] = {
-                        "ts": remote_ts,
-                        "hash": row.get('content_hash')
-                    }
+                    # 实时计算远程数据的 Hash
+                    remote_data = self._row_to_account_data(row)
+                    remote_hash = calculate_account_hash(remote_data)
+                    remote_state[row['email']] = remote_hash
             
             with connection.cursor() as cursor:
                 for email, local_data in accounts.items():
                     local_hash = calculate_account_hash(local_data)
-                    local_ts_str = local_data.get("last_modified_at")
-                    
-                    remote_info = remote_state.get(email)
-                    remote_ts_str = remote_info["ts"] if remote_info else None
-                    remote_hash = remote_info["hash"] if remote_info else None
+                    remote_hash = remote_state.get(email)
 
-                    # 逻辑 1: 处理手动编辑 (Manual Edit Handling)
-                    current_local_ts = local_ts_str
-                    if file_mtime and local_ts_str:
-                        try:
-                            # 这里的 file_mtime 是 float seconds
-                            if local_hash != remote_hash:
-                                l_dt = parse_iso(local_ts_str)
-                                if l_dt:
-                                    # 将 file_mtime (本地时间戳) 转为 aware datetime
-                                    from app.core.time_utils import from_timestamp
-                                    # time_utils 返回的是 UTC+8
-                                    f_dt = from_timestamp(file_mtime)
-                                    
-                                    # 为了计算 diff，统一转 UTC
-                                    f_dt_utc = f_dt.astimezone(timezone.utc)
-                                    l_dt_utc = l_dt.astimezone(timezone.utc)
-                                    
-                                    # 如果文件时间比记录时间晚 10 秒以上
-                                    if (f_dt_utc - l_dt_utc).total_seconds() > 10:
-                                        logger.info(f"Detected potential manual edit for {email}: File Time > Local TS. Using File Time.")
-                                        current_local_ts = f_dt.astimezone().isoformat()
-                                        local_data['last_modified_at'] = current_local_ts
-                        except Exception:
-                            pass # 忽略时间比较错误
-
-                    # 决定是否更新：
-                    should_push = False
                     action = "skip"
+                    should_push = False
                     
                     if email not in remote_state:
                          should_push = True
                          action = "insert"
                     elif local_hash != remote_hash:
-                        # 内容不同，比较时间戳
-                        if self._is_newer(current_local_ts, remote_ts_str):
-                            should_push = True
-                            action = "update"
+                        # Hash 不一致，强制覆盖
+                        should_push = True
+                        action = "update"
                     
                     if should_push:
-                        logger.debug(f"PUSH {email}: Action={action} LocalTS={current_local_ts} RemoteTS={remote_ts_str}")
-                        self._upsert_account(cursor, email, local_data, local_hash)
-                        if action == "insert":
-                            added += 1
-                        else:
+                        if action == "update":
+                            # 更新前先备份 DB 中的旧数据
+                            self._backup_db_record(cursor, email, f"overwrite_by_push_{source}")
+                            # 清理旧备份 (保留 10 条)
+                            self._cleanup_db_history(cursor, email)
                             updated += 1
+                        else:
+                            added += 1
+                            
+                        self._upsert_account(cursor, email, local_data)
                     else:
                         skipped += 1
             
@@ -265,12 +312,44 @@ class AccountSynchronizer:
             connection.close()
 
         msg = f"PUSH Sync: Added {added}, Updated {updated}, Skipped {skipped}"
-        logger.info(msg)
+        if added > 0 or updated > 0:
+            logger.info(msg)
         return SyncReport(message=msg, added=added, updated=updated, skipped=skipped)
+
+    def _backup_db_record(self, cursor, email: str, reason: str) -> None:
+        """
+        将当前数据库记录备份到历史表
+        """
+        sql = f"""
+        INSERT INTO {self._table_name}_history 
+        (original_email, backup_reason, password, data, status, status_updated_at, status_reason, token_failures, tags, note, last_modified_at, is_deleted)
+        SELECT 
+            email, %s, password, data, status, status_updated_at, status_reason, token_failures, tags, note, last_modified_at, is_deleted
+        FROM {self._table_name}
+        WHERE email = %s
+        """
+        cursor.execute(sql, (reason, email))
+
+    def _cleanup_db_history(self, cursor, email: str) -> None:
+        """
+        清理历史表，只保留最近 10 条
+        """
+        sql = f"""
+        DELETE FROM {self._table_name}_history 
+        WHERE original_email = %s 
+        AND id NOT IN (
+            SELECT id FROM {self._table_name}_history 
+            WHERE original_email = %s 
+            ORDER BY backup_timestamp DESC 
+            LIMIT 10
+        )
+        """
+        cursor.execute(sql, (email, email))
 
     def sync_db_to_file(self, local_accounts: Dict[str, Dict[str, object]]) -> Tuple[Dict[str, Dict[str, object]], SyncReport, bool]:
         """
-        PULL: 将数据库中更有新意的数据拉取到本地
+        PULL: 将数据库中的数据拉取到本地 (Force Sync + Backup)
+        逻辑：实时计算Hash -> Hash 不同 -> 备份本地文件 -> 强制覆盖
         """
         if not self.is_enabled:
              raise RuntimeError("Database not configured")
@@ -286,44 +365,45 @@ class AccountSynchronizer:
             with connection.cursor() as cursor:
                 cursor.execute(f"SELECT * FROM {self._table_name} WHERE is_deleted = FALSE")
                 remote_rows = cursor.fetchall()
-
+            
             for row in remote_rows:
                 email = row['email']
-                remote_ts = row['last_modified_at'].isoformat() if row['last_modified_at'] else None
+                
+                # 实时计算远程 Hash
+                remote_data = self._row_to_account_data(row)
+                remote_hash = calculate_account_hash(remote_data)
                 
                 local_data = merged_accounts.get(email)
-                local_ts = local_data.get("last_modified_at") if local_data else None
-
-                # 计算 DB 数据的哈希 (需要先转换)
-                # 因为我们只能拿到 raw dict，所以需要模拟转换后的结构来计算 hash 吗?
-                # 不，DB 里有 content_hash 字段了!
-                remote_hash = row.get('content_hash')
-                
-                # Check Local
-                local_data = merged_accounts.get(email)
-                local_ts = local_data.get("last_modified_at") if local_data else None
                 local_hash = calculate_account_hash(local_data) if local_data else None
 
-                # 决定是否拉取：
-                # 1. 本地不存在 -> 拉取
-                # 2. 本地存在，Hash 不同，且 Remote 更 -> 拉取
-                
                 should_pull = False
-                
+                action = "skip"
+
                 if email not in merged_accounts:
                     should_pull = True
-                    added += 1
+                    action = "insert"
                 elif local_hash != remote_hash:
-                     if self._is_newer(remote_ts, local_ts):
-                         should_pull = True
-                         updated += 1
+                     # Hash 不一致，强制从服务器拉取覆盖本地
+                     should_pull = True
+                     action = "update"
                 
                 if should_pull:
-                    merged_accounts[email] = self._row_to_account_data(row)
+                    if action == "update":
+                        # 覆盖前备份本地数据
+                        self._backup_local_record(email, local_data)
+                        self._cleanup_local_backups(email)
+                        updated += 1
+                    else:
+                        added += 1
+
+                    merged_accounts[email] = remote_data
                     has_changes = True
                 else:
                     skipped += 1
         
+        except Exception as e:
+            logger.error(f"Sync db to file failed: {e}")
+            raise
         finally:
             connection.close()
             
@@ -332,6 +412,64 @@ class AccountSynchronizer:
             logger.info(msg)
             
         return merged_accounts, SyncReport(message=msg, added=added, updated=updated, skipped=skipped), has_changes
+
+    def _backup_local_record(self, email: str, data: Dict[str, Any]) -> None:
+        """
+        将本地单个账号数据备份为独立 JSON 文件
+        目录：{BASE_DIR}/data/backups/
+        文件名：{email}_{timestamp}.json
+        """
+        try:
+            from app.config import BASE_DIR
+            backup_dir = BASE_DIR / "data" / "backups"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            
+            ts_str = int(time.time())
+            # 文件名处理安全字符，邮箱中的特殊符号
+            safe_email = email.replace("/", "_").replace("\\", "_")
+            filename = f"{safe_email}_{ts_str}.json"
+            
+            file_path = backup_dir / filename
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                
+            logger.info(f"Backed up local data for {email} to {file_path}")
+        except Exception as e:
+            logger.error(f"Failed to backup local record for {email}: {e}")
+
+    def _cleanup_local_backups(self, email: str) -> None:
+        """
+        清理本地备份，只保留最近 10 个
+        """
+        try:
+            from app.config import BASE_DIR
+            backup_dir = BASE_DIR / "data" / "backups"
+            if not backup_dir.exists():
+                return
+            
+            # 安全文件名匹配
+            safe_email = email.replace("/", "_").replace("\\", "_")
+            pattern = f"{safe_email}_*.json"
+            
+            files = list(backup_dir.glob(pattern))
+            
+            if len(files) <= 10:
+                return
+                
+            # 按修改时间倒序（最新的在前）
+            files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            
+            # 删除第 10 个以后的
+            to_delete = files[10:]
+            for f in to_delete:
+                with suppress(Exception):
+                    f.unlink()
+            
+            if to_delete:
+                logger.debug(f"Cleaned up {len(to_delete)} old backups for {email}")
+                
+        except Exception as e:
+            logger.error(f"Failed to cleanup local backups for {email}: {e}")
 
     def _is_newer(self, ts1_str: str | None, ts2_str: str | None) -> bool:
         """
@@ -352,7 +490,7 @@ class AccountSynchronizer:
             logger.warning(f"Error comparing timestamps: {ts1_str} vs {ts2_str}")
             return False
 
-    def _upsert_account(self, cursor, email: str, data: Dict[str, Any], content_hash: str):
+    def _upsert_account(self, cursor, email: str, data: Dict[str, Any]):
         """
         Insert or Update account in DB decomposing the JSON data
         """
@@ -380,14 +518,10 @@ class AccountSynchronizer:
         # Ensure we have a timestamp for DB
         last_modified_at = data.get("last_modified_at") or now_str()
         
-        # Calculate hash if not provided (though it should be)
-        if not content_hash:
-            content_hash = calculate_account_hash(data)
-
         sql = f"""
         INSERT INTO {self._table_name} 
-        (email, password, data, status, status_updated_at, status_reason, token_failures, tags, note, last_modified_at, content_hash, is_deleted)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
+        (email, password, data, status, status_updated_at, status_reason, token_failures, tags, note, last_modified_at, is_deleted)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
         ON CONFLICT (email) DO UPDATE SET
             password = EXCLUDED.password,
             data = EXCLUDED.data,
@@ -398,7 +532,6 @@ class AccountSynchronizer:
             tags = EXCLUDED.tags,
             note = EXCLUDED.note,
             last_modified_at = EXCLUDED.last_modified_at,
-            content_hash = EXCLUDED.content_hash,
             is_deleted = FALSE
         """
         
@@ -412,8 +545,7 @@ class AccountSynchronizer:
             token_failures_json,
             tags_json,
             note,
-            last_modified_at,
-            content_hash
+            last_modified_at
         ))
 
     def _row_to_account_data(self, row: dict) -> Dict[str, Any]:
