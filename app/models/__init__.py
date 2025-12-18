@@ -13,6 +13,7 @@ from .schemas import (
     TokenHealthSettings,
     UpdateNoteRequest,
     UpdateTagsRequest,
+    BatchImportRequest,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "TokenHealthSettings",
     "UpdateNoteRequest",
     "UpdateTagsRequest",
+    "BatchImportRequest",
 ]

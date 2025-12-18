@@ -100,29 +100,31 @@ class AccountSynchronizer:
             return
 
         with connection.cursor() as cursor:
-            # 检查表以及 content_hash 列是否存在
+            # 检查表以及 password, content_hash 列是否存在
+            # 我们检查 password 列是否存在来决定是否由于 Schema 变更需要重建
             cursor.execute(
                 """
                 SELECT column_name 
                 FROM information_schema.columns 
-                WHERE table_name = %s AND column_name = 'content_hash'
+                WHERE table_name = %s AND column_name = 'password'
                 """,
                 (self._table_name,),
             )
             has_new_schema = cursor.fetchone()
 
             if not has_new_schema:
-                logger.warning(f"表 {self._table_name} 结构不匹配（缺少 content_hash），正在重建...")
+                logger.warning(f"表 {self._table_name} 结构不匹配（缺少 password 列），正在重建...")
                 # 删除旧表和关联表（如果存在）
                 cursor.execute(f"DROP TABLE IF EXISTS {self._table_name}_tags CASCADE")
                 cursor.execute(f"DROP TABLE IF EXISTS {self._table_name} CASCADE")
 
                 # 创建新表
-                # data 字段只存 refresh_token 和 client_id
+                # data 字段只存 refresh_token 和 client_id (密码分离)
                 cursor.execute(
                     f"""
                     CREATE TABLE {self._table_name} (
                         email VARCHAR(255) PRIMARY KEY,
+                        password TEXT,       -- 独立存储密码
                         data TEXT NOT NULL,  -- JSON: {{"refresh_token": "...", "client_id": "..."}}
                         status VARCHAR(50) DEFAULT 'active',
                         status_updated_at TIMESTAMP WITH TIME ZONE,
@@ -355,9 +357,12 @@ class AccountSynchronizer:
         Insert or Update account in DB decomposing the JSON data
         """
         # Prepare parts
+        password = data.get("password")
+        
+        # auth_data excludes password now
         auth_data = {
             "refresh_token": data.get("refresh_token"),
-            "client_id": data.get("client_id")
+            "client_id": data.get("client_id"),
         }
         
         status = data.get("status", "active")
@@ -381,9 +386,10 @@ class AccountSynchronizer:
 
         sql = f"""
         INSERT INTO {self._table_name} 
-        (email, data, status, status_updated_at, status_reason, token_failures, tags, note, last_modified_at, content_hash, is_deleted)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
+        (email, password, data, status, status_updated_at, status_reason, token_failures, tags, note, last_modified_at, content_hash, is_deleted)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, FALSE)
         ON CONFLICT (email) DO UPDATE SET
+            password = EXCLUDED.password,
             data = EXCLUDED.data,
             status = EXCLUDED.status,
             status_updated_at = EXCLUDED.status_updated_at,
@@ -398,6 +404,7 @@ class AccountSynchronizer:
         
         cursor.execute(sql, (
             email,
+            password,
             json.dumps(auth_data),
             status,
             status_updated_at,
@@ -419,7 +426,10 @@ class AccountSynchronizer:
         except Exception:
             data = {}
             
-        # 2. Mix in other fields
+        # 2. Add password from column
+        data['password'] = row.get('password')
+
+        # 3. Mix in other fields
         data['status'] = row['status']
         if row['status_updated_at']:
              data['status_updated_at'] = row['status_updated_at'].isoformat()

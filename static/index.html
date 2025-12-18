@@ -171,6 +171,13 @@
                             </div>
 
                             <div class="form-group">
+                                <label class="form-label">密码 (Password)</label>
+                                <input type="text" id="password" class="form-input" placeholder="password"
+                                    value="password">
+                                <p class="text-xs" style="color: #64748b; margin-top: 4px;">账户密码（选填，默认password）</p>
+                            </div>
+
+                            <div class="form-group">
                                 <label class="form-label">刷新令牌 (Refresh Token) *</label>
                                 <textarea id="refreshToken" class="form-input form-textarea" rows="4"
                                     placeholder="从Azure应用获取的refresh_token" required></textarea>
@@ -242,16 +249,15 @@
                             <div class="form-group">
                                 <label class="form-label">批量账户信息</label>
                                 <p class="text-sm" style="color: #64748b; margin-bottom: 8px;">
-                                    每行格式：<code>邮箱----密码----刷新令牌----客户端ID</code>
+                                    每行格式：<code>邮箱----密码----客户端ID----刷新令牌</code>
                                 </p>
                                 <p class="text-sm" style="color: #64748b; margin-bottom: 12px;">
                                     📧 推荐购买地址（非广告，只是推荐）：
                                     <a target="_blank" href="http://wmemail.com"
                                         style="color: #3b82f6; margin: 0 8px;">wmemail.com</a>
                                 </p>
-                                <textarea id="batchAccounts" class="form-input form-textarea" rows="12" placeholder="example1@outlook.com----password1----refresh_token1----client_id1
-example2@outlook.com----password2----refresh_token2----client_id2
-example3@outlook.com----password3----refresh_token3----client_id3"></textarea>
+                                <textarea id="batchAccounts" class="form-input form-textarea" rows="12" placeholder="example1@outlook.com----password1----client_id1----refresh_token1
+example2@outlook.com----password2----client_id2----refresh_token2"></textarea>
                                 <p class="text-xs" style="color: #64748b; margin-top: 8px;">
                                     💡 提示：每行一个账户，使用四个连字符(----)分隔字段
                                 </p>

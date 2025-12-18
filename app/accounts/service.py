@@ -16,6 +16,8 @@ from app.models import (
     AccountInfo,
     AccountListResponse,
     AccountResponse,
+    AccountResponse,
+    BatchImportRequest,
     UpdateNoteRequest,
     UpdateTagsRequest,
 )
@@ -96,6 +98,7 @@ class AccountService:
         payload = {
             "refresh_token": credentials.refresh_token,
             "client_id": credentials.client_id,
+            "password": credentials.password,
             "tags": credentials.tags or [],
             "status": "active",
         }
@@ -135,6 +138,75 @@ class AccountService:
         self.record_token_success(email_id)
         logger.info("Account %s status manually reset to active", email_id)
         return AccountResponse(email_id=email_id, message="账户状态已重置为正常")
+
+    async def batch_import_accounts(self, request: BatchImportRequest) -> Dict[str, object]:
+        lines = request.text.strip().splitlines()
+        success = 0
+        failed = 0
+        errors = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Format: Email----Password----RefreshToken----ClientId
+            parts = line.split("----")
+            if len(parts) < 4:
+                # Try relaxed parsing if strict split fails? No, strict as per requirement.
+                # But maybe handle "password" missing if user skips it? 
+                # User said: "Email----Password----RefreshToken----ClientId"
+                # If parts are fewer, maybe password was empty? "Email--------RefreshToken..."
+                # split("----") will give empty string for password. 
+                # But if split gives < 4 parts, it's definitely malformed.
+                errors.append(f"Format error: {line[:50]}...")
+                failed += 1
+                continue
+                
+            email = parts[0].strip()
+            password = parts[1].strip()
+            # Based on user sample: Email----Password----ClientID----RefreshToken
+            # UUID (Client ID) is usually shorter than RefreshToken
+            p2 = parts[2].strip()
+            p3 = parts[3].strip()
+            
+            # Auto-detect like frontend does, or enforce strict?
+            # User sample had UUID at pos 2.
+            # Let's simple check length if unsure, or just swap as per analysis.
+            # UUID is ~36 chars. Refresh Token is huge.
+            if len(p2) < len(p3):
+                 client_id = p2
+                 refresh_token = p3
+            else:
+                 refresh_token = p2
+                 client_id = p3
+            
+            # Apply default password if empty
+            if not password:
+                password = request.default_password
+
+            try:
+                # Reuse register_account to ensure validation and saving
+                creds = AccountCredentials(
+                    email=email,
+                    password=password,
+                    refresh_token=refresh_token,
+                    client_id=client_id,
+                    tags=["batch_import"]
+                )
+                await self.register_account(creds)
+                success += 1
+            except Exception as e:
+                logger.error(f"Failed to import {email}: {e}")
+                errors.append(f"{email}: {str(e)}")
+                failed += 1
+                
+        return {
+            "message": f"批量导入完成。成功: {success}, 失败: {failed}",
+            "success_count": success,
+            "failed_count": failed,
+            "errors": errors
+        }
 
     def sync_local_to_remote(self) -> SyncReport:
         synchronizer = self._require_synchronizer()

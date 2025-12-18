@@ -19,6 +19,7 @@ class AccountSchema(BaseModel):
     """
     refresh_token: str
     client_id: str
+    password: Optional[str] = None
     
     tags: List[str] = Field(default_factory=list)
     note: Optional[str] = None
@@ -56,6 +57,7 @@ class AccountCredentials(AccountSchema):
                 "email": "user@outlook.com",
                 "refresh_token": "0.AXoA...",
                 "client_id": "your-client-id",
+                "password": "password",
                 "tags": ["工作", "个人"],
             }
         }
@@ -168,3 +170,8 @@ class ApiKeyRequest(BaseModel):
 class TokenHealthSettings(BaseModel):
     enabled: bool = True
     interval_minutes: int = Field(default=1440, ge=60, le=10080)
+
+
+class BatchImportRequest(BaseModel):
+    text: str
+    default_password: str = "password"

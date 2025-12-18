@@ -10,6 +10,7 @@ from app.models import (
     SyncResult,
     UpdateNoteRequest,
     UpdateTagsRequest,
+    BatchImportRequest,
 )
 from app.security import require_api_key
 
@@ -34,6 +35,18 @@ async def register_account(
     _: None = Depends(require_api_key),
 ) -> AccountResponse:
     return await account_service.register_account(credentials)
+
+
+@router.post("/batch", response_model=dict)
+async def batch_import_accounts(
+    request: BatchImportRequest,
+    _: None = Depends(require_api_key),
+) -> dict:
+    """
+    Batch import accounts from text.
+    Format per line: Email----Password----RefreshToken----ClientId
+    """
+    return await account_service.batch_import_accounts(request)
 
 
 @router.put("/{email_id}/tags", response_model=AccountResponse)

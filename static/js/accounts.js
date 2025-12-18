@@ -10,11 +10,13 @@ const ACCOUNT_STATUS_META = {
 
 function clearAddAccountForm() {
     const emailInput = document.getElementById('email');
+    const passwordInput = document.getElementById('password');
     const refreshInput = document.getElementById('refreshToken');
     const clientInput = document.getElementById('clientId');
     const tagInput = document.getElementById('accountTags');
 
     if (emailInput) emailInput.value = '';
+    if (passwordInput) passwordInput.value = 'password';
     if (refreshInput) refreshInput.value = '';
     if (clientInput) clientInput.value = '';
     if (tagInput) tagInput.value = '';
@@ -330,11 +332,13 @@ async function syncAccountsFromServer(button) {
 
 async function addAccount() {
     const emailInput = document.getElementById('email');
+    const passwordInput = document.getElementById('password');
     const refreshInput = document.getElementById('refreshToken');
     const clientInput = document.getElementById('clientId');
     const tagsInput = document.getElementById('accountTags');
 
     const email = emailInput ? emailInput.value.trim() : '';
+    const password = passwordInput ? passwordInput.value.trim() : 'password';
     const refreshToken = refreshInput ? refreshInput.value.trim() : '';
     const clientId = clientInput ? clientInput.value.trim() : '';
     const tags = tagsInput && tagsInput.value.trim()
@@ -357,6 +361,7 @@ async function addAccount() {
             method: 'POST',
             body: JSON.stringify({
                 email,
+                password,
                 refresh_token: refreshToken,
                 client_id: clientId,
                 tags,
@@ -420,32 +425,35 @@ async function batchAddAccounts() {
             continue;
         }
 
+        const email = parts[0];
+        const password = parts[1]; // Get password
+
         // Auto-detect format based on client_id length (UUID = 36 chars)
         const p3 = parts[2];
         const p4 = parts[3];
         let refreshToken, clientId;
 
-        // Format detection: Client ID (short) vs Refresh Token (long)
-        if (p3.length < p4.length) {
+        // Smart Swap Logic: UUID is short (<50), Token is long (>100)
+        if (p3.length < 50) {
             // Format: email----pass----client_id----refresh_token
+            // User sample: 64add... (UUID) is at pos 2.
             clientId = p3;
             refreshToken = p4;
         } else {
-            // Format: email----pass----refresh_token----client_id (Default)
+            // Format: email----pass----refresh_token----client_id
             refreshToken = p3;
             clientId = p4;
         }
-
-        const email = parts[0];
 
         try {
             await apiRequest('/accounts', {
                 method: 'POST',
                 body: JSON.stringify({
                     email,
+                    password: password || 'password', // Default if empty in split? (split preserves empty string usually if formatted right)
                     refresh_token: refreshToken,
                     client_id: clientId,
-                }), // tags removed from body as it is not in the destructuring
+                }),
             });
             successCount += 1;
             results.push({ email, status: 'success', message: '添加成功' });
@@ -454,7 +462,8 @@ async function batchAddAccounts() {
             results.push({ email, status: 'error', message: error.message });
         }
 
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        // Small delay to prevent browser freeze
+        await new Promise((resolve) => setTimeout(resolve, 50));
     }
 
     updateBatchProgress(lines.length, lines.length, '批量添加完成！');
