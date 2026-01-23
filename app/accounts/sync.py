@@ -80,16 +80,29 @@ class AccountSynchronizer:
         return all([ACCOUNTS_DB_HOST, ACCOUNTS_DB_USER, ACCOUNTS_DB_PASSWORD, ACCOUNTS_DB_NAME])
 
     def _connect(self):
-        if DATABASE_URL:
-            return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
-        return psycopg2.connect(
-            host=ACCOUNTS_DB_HOST,
-            user=ACCOUNTS_DB_USER,
-            password=ACCOUNTS_DB_PASSWORD,
-            dbname=ACCOUNTS_DB_NAME,
-            port=ACCOUNTS_DB_PORT,
-            cursor_factory=RealDictCursor,
-        )
+        # Implement check-and-retry logic for robust connections (especially for Serverless DBs)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                if DATABASE_URL:
+                    return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+                return psycopg2.connect(
+                    host=ACCOUNTS_DB_HOST,
+                    user=ACCOUNTS_DB_USER,
+                    password=ACCOUNTS_DB_PASSWORD,
+                    dbname=ACCOUNTS_DB_NAME,
+                    port=ACCOUNTS_DB_PORT,
+                    cursor_factory=RealDictCursor,
+                )
+            except psycopg2.OperationalError as e:
+                if attempt == max_retries - 1:
+                    logger.error("Failed to connect to database after %s attempts", max_retries)
+                    raise
+                
+                wait_time = 1 * (attempt + 1)
+                logger.warning("Database connection failed (attempt %s/%s): %s. Retrying in %ss...", 
+                               attempt + 1, max_retries, e, wait_time)
+                time.sleep(wait_time)
 
     def _ensure_schema(self, connection) -> None:
         """
@@ -254,7 +267,7 @@ class AccountSynchronizer:
         if not self.is_enabled:
             raise RuntimeError("Database not configured")
 
-        added = updated = skipped = 0
+        added = updated = skipped = removed = 0
         connection = self._connect()
         
         try:
@@ -302,6 +315,25 @@ class AccountSynchronizer:
                     else:
                         skipped += 1
             
+            # --- Deletion Handling ---
+            # Identify accounts present in DB but missing locally
+            local_emails = set(accounts.keys())
+            remote_emails = set(remote_state.keys())
+            deleted_emails = remote_emails - local_emails
+            
+            if deleted_emails:
+                with connection.cursor() as cursor:
+                    for email in deleted_emails:
+                        # Backup before soft delete
+                        self._backup_db_record(cursor, email, f"deleted_by_push_{source}")
+                        
+                        cursor.execute(
+                            f"UPDATE {self._table_name} SET is_deleted = TRUE, last_modified_at = %s WHERE email = %s",
+                            (now_str(), email)
+                        )
+                        removed += 1
+                        logger.info("Marked account %s as deleted in database.", email)
+            
             connection.commit()
             
         except Exception as e:
@@ -311,10 +343,10 @@ class AccountSynchronizer:
         finally:
             connection.close()
 
-        msg = f"PUSH Sync: Added {added}, Updated {updated}, Skipped {skipped}"
-        if added > 0 or updated > 0:
+        msg = f"PUSH Sync: Added {added}, Updated {updated}, Skipped {skipped}, Removed {removed}"
+        if added > 0 or updated > 0 or removed > 0:
             logger.info(msg)
-        return SyncReport(message=msg, added=added, updated=updated, skipped=skipped)
+        return SyncReport(message=msg, added=added, updated=updated, skipped=skipped, removed=removed)
 
     def _backup_db_record(self, cursor, email: str, reason: str) -> None:
         """
