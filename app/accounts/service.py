@@ -139,6 +139,14 @@ class AccountService:
         logger.info("Account %s status manually reset to active", email_id)
         return AccountResponse(email_id=email_id, message="账户状态已重置为正常")
 
+    def update_account_protocol(self, email_id: str, protocol: str) -> None:
+        def mutate(entry: Dict[str, object]) -> bool:
+            if entry.get("email_protocol") == protocol:
+                return False
+            entry["email_protocol"] = protocol
+            return True
+        self._update_account_entry(email_id, mutate)
+
     async def batch_import_accounts(self, request: BatchImportRequest) -> Dict[str, object]:
         lines = request.text.strip().splitlines()
         success = 0

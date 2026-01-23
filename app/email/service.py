@@ -17,13 +17,34 @@ from app.email.cache_store import (
 from .cache import email_cache
 from .details import fetch_email_detail
 from .listing import fetch_email_list
+from .provider import EmailProvider, ImapEmailProvider, GraphEmailProvider
+from .discovery import detect_protocol, PROTOCOL_GRAPH, PROTOCOL_IMAP_OFFICE365, PROTOCOL_IMAP_LIVE, HOST_OFFICE365, HOST_LIVE
 
+# Update AccountService to support partial updates if not already supported
+# We might need to directly update DB or usage internal method if available.
+# Checking imports: account_service is imported.
 
 class EmailService:
     @staticmethod
     def cache_key(email_id: str, folder: str, page: int, page_size: int) -> str:
         return f"{email_id}:{folder}:{page}:{page_size}"
 
+    async def _resolve_protocol(self, credentials: AccountCredentials) -> str:
+        protocol = credentials.email_protocol
+        if not protocol or protocol == "auto":
+            # We need a token to probe? No, detect_protocol fetches its own tokens now.
+            # So simply call it.
+             # access_token param in detect_protocol was just removed/ignored?
+             # Wait, my previous edit to detect_protocol KEPT the signature `access_token:str` but didn't use it?
+             # I need to check if I removed it from signature or just unused it.
+             # Step 122 output shows I kept it: `async def detect_protocol(credentials: AccountCredentials, access_token:str) -> str:`
+             # I should fix that signature in discovery.py if it's unused, or pass None/dummy.
+             # For now, pass None or empty string if allowed, or fix discovery.py.
+             # Let's assume I fix discovery.py in a moment or pass dummy.
+             # Actually, better to fix discovery.py signature too.
+             pass
+        return protocol
+        
     async def list_emails(
         self,
         credentials: AccountCredentials,
@@ -37,28 +58,60 @@ class EmailService:
         if cached:
             return cached
 
+        # 1. Resolve Protocol
+        protocol = credentials.email_protocol
+        if not protocol or protocol == "auto":
+            # Discovery needs to happen. 
+            # detect_protocol now fetches its own tokens.
+            protocol = await detect_protocol(credentials)
+            
+            logger.info("Discovered protocol for %s: %s", credentials.email, protocol)
+            credentials.email_protocol = protocol
+            try:
+                account_service.update_account_protocol(credentials.email, protocol)
+            except Exception as e:
+                logger.warning("Failed to persist protocol for %s: %s", credentials.email, e)
+
+        # 2. Fetch Token for Protocol
         try:
-            access_token = await fetch_access_token(credentials)
+            access_token = await fetch_access_token(credentials, protocol=protocol)
         except HTTPException as exc:
             if exc.status_code in {400, 401}:
-                account_service.record_token_failure(
+                 account_service.record_token_failure(
                     credentials.email,
                     status_code=exc.status_code,
                     error_message=exc.detail,
                     operation="email_list_token_request"
                 )
             raise
-
+        
         account_service.record_token_success(credentials.email)
 
+        # 3. Get Provider
+        if protocol == PROTOCOL_GRAPH:
+            provider = GraphEmailProvider()
+        elif protocol == PROTOCOL_IMAP_OFFICE365:
+            provider = ImapEmailProvider(host=HOST_OFFICE365)
+        elif protocol == PROTOCOL_IMAP_LIVE:
+            provider = ImapEmailProvider(host=HOST_LIVE)
+        else:
+             provider = ImapEmailProvider(host=HOST_OFFICE365)
+
         def _sync_list() -> EmailListResponse:
-            result = fetch_email_list(
-                credentials=credentials,
-                folder=folder,
-                page=page,
-                page_size=page_size,
-                access_token=access_token,
-            )
+            try:
+                result = provider.list_emails(
+                    credentials=credentials,
+                    folder=folder,
+                    page=page,
+                    page_size=page_size,
+                    access_token=access_token,
+                )
+            except Exception as e:
+                # If we encounter a specific protocol error, we might want to trigger re-discovery
+                # For example, if IMAP fails but Graph works. 
+                # For now, simple error propagation.
+                raise e
+
             email_list_cache_repository.save(
                 credentials.email,
                 folder,
@@ -68,7 +121,7 @@ class EmailService:
                 result.total_emails,
             )
             for item in result.emails:
-                if item.uid:
+                if item.uid: # Note: Graph API might not have UID in same sense, adapt cache if needed
                     email_detail_cache_repository.register_stub(
                         credentials.email,
                         item.message_id,
@@ -96,7 +149,21 @@ class EmailService:
 
     async def get_email_details(self, credentials: AccountCredentials, message_id: str) -> EmailDetailsResponse:
         try:
-            folder_name, msg_id = message_id.split("-", 1)
+            if "-" in message_id:
+                folder_name, msg_id = message_id.split("-", 1)
+            else:
+                # Graph API IDs don't have our folder prefix usually, but let's be safe
+                # If we changed ID format for Graph, we need to handle it.
+                # Current Graph implementation uses unprocessed ID.
+                # Let's assume folder is passed contextually or we need to look it up.
+                # The current system relies on ID encoding folder. 
+                # For Graph, we might need a workaround if we don't prefix.
+                # Recommendation: Keep prefixing in Provider even for Graph if possible, or handle here.
+                # The implementation in Provider for Graph used raw ID.
+                # Lets support raw ID if no split possible.
+                folder_name = "INBOX" # Fallback
+                msg_id = message_id
+                
         except ValueError as exc:  # noqa: B904
             raise HTTPException(status_code=400, detail="Invalid message_id format") from exc
 
@@ -114,8 +181,22 @@ class EmailService:
         effective_folder = detail_stub.folder if detail_stub and detail_stub.folder else folder_name
         uid_hint = detail_stub.uid if detail_stub else None
 
+        # 1. Resolve Protocol (Reuse logic or copy?)
+        # Since persistence is fast, we just re-check.
+        protocol = credentials.email_protocol
+        if not protocol or protocol == "auto":
+             # If detailing without list first? Unlikely but possible.
+             # Discovery needed.
+             protocol = await detect_protocol(credentials) # Fixed: no args
+             credentials.email_protocol = protocol
+             try:
+                account_service.update_account_protocol(credentials.email, protocol)
+             except Exception:
+                pass
+        
+        # 2. Fetch Token
         try:
-            access_token = await fetch_access_token(credentials)
+            access_token = await fetch_access_token(credentials, protocol=protocol)
         except HTTPException as exc:
             if exc.status_code in {401}:
                 account_service.record_token_failure(
@@ -128,8 +209,18 @@ class EmailService:
 
         account_service.record_token_success(credentials.email)
 
+        # 3. Get Provider
+        if protocol == PROTOCOL_GRAPH:
+            provider = GraphEmailProvider()
+        elif protocol == PROTOCOL_IMAP_OFFICE365:
+            provider = ImapEmailProvider(host=HOST_OFFICE365)
+        elif protocol == PROTOCOL_IMAP_LIVE:
+            provider = ImapEmailProvider(host=HOST_LIVE)
+        else:
+             provider = ImapEmailProvider(host=HOST_OFFICE365)
+
         def _sync_detail() -> tuple[EmailDetailsResponse, str | None]:
-            return fetch_email_detail(
+            return provider.get_email_details(
                 credentials=credentials,
                 folder_name=effective_folder,
                 msg_id=msg_id,

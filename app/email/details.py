@@ -4,7 +4,7 @@ import email
 
 from fastapi import HTTPException
 
-from app.config import logger
+from app.config import IMAP_SERVER, logger
 from app.infrastructure.imap import imap_pool
 from app.models import AccountCredentials, EmailDetailsResponse
 
@@ -18,10 +18,11 @@ def fetch_email_detail(
     message_id: str,
     access_token: str,
     uid: str | None = None,
+    host: str = IMAP_SERVER,
 ) -> tuple[EmailDetailsResponse, str | None]:
     imap_client = None
     try:
-        imap_client = imap_pool.get_connection(credentials.email, access_token)
+        imap_client = imap_pool.get_connection(credentials.email, access_token, host=host)
         imap_client.select(folder_name)
         if uid:
             status, msg_data = imap_client.uid("FETCH", uid, "(RFC822)")

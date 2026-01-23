@@ -30,7 +30,13 @@ EMAIL_LIST_CACHE_TABLE = os.getenv("EMAIL_LIST_CACHE_TABLE", "email_list_cache")
 EMAIL_DETAIL_CACHE_TABLE = os.getenv("EMAIL_DETAIL_CACHE_TABLE", "email_detail_cache")
 
 TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
-OAUTH_SCOPE = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
+# Used for Consent URL (Frontend) - Request all permissions
+OAUTH_SCOPE = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access User.Read Mail.Read"
+
+# Specific scopes for Access Token requests (Mutually Exclusive)
+# Specific scopes for Access Token requests (Mutually Exclusive)
+GRAPH_SCOPE = "https://graph.microsoft.com/.default offline_access"
+IMAP_SCOPE = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
 
 IMAP_SERVER = "outlook.live.com"
 IMAP_PORT = 993

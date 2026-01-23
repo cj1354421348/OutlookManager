@@ -27,6 +27,7 @@ class AccountSchema(BaseModel):
     status: str = "active"
     status_updated_at: Optional[str] = None
     status_reason: Optional[str] = None
+    email_protocol: Optional[str] = None  # graph_api, imap_office365, imap_live, auto
     
     token_failures: Optional[TokenFailureDetails] = None
     
