@@ -14,6 +14,8 @@ from app.core.traffic_logger import traffic_logger
 class LoggedIMAP4_SSL(imaplib.IMAP4_SSL):
     def __init__(self, host, port, email_account="unknown"):
         self._email_account = email_account
+        self._current_folder = None
+        self._last_select_resp = None
         super().__init__(host, port)
 
     def _log_cmd(self, name, *args):
@@ -21,10 +23,22 @@ class LoggedIMAP4_SSL(imaplib.IMAP4_SSL):
         pass
 
     def select(self, mailbox='INBOX', readonly=False):
+        # Optimization: return cached response if already in this folder
+        # Note: This returns the *last known* message count. 
+        # For high-frequency operations, this avoids 1 RTT per call.
+        if self._current_folder == mailbox and self._last_select_resp:
+             return self._last_select_resp
+
         from app.core.time_utils import monotonic
         start = monotonic()
         try:
             status, data = super().select(mailbox, readonly)
+            
+            # Update cache
+            if status == "OK":
+                self._current_folder = mailbox
+                self._last_select_resp = (status, data)
+                
             duration = (monotonic() - start) * 1000
             traffic_logger.log("IMAP", self._email_account, f"SELECT {mailbox}", status, duration)
             return status, data

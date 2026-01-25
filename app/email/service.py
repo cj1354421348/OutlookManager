@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
 from app.accounts import account_service
 from app.config import logger
@@ -52,6 +52,7 @@ class EmailService:
         page: int,
         page_size: int,
         force_refresh: bool = False,
+        background_tasks: BackgroundTasks | None = None,
     ) -> EmailListResponse:
         cache_key = self.cache_key(credentials.email, folder, page, page_size)
         cached = email_cache.get(cache_key, force_refresh)
@@ -61,10 +62,7 @@ class EmailService:
         # 1. Resolve Protocol
         protocol = credentials.email_protocol
         if not protocol or protocol == "auto":
-            # Discovery needs to happen. 
-            # detect_protocol now fetches its own tokens.
             protocol = await detect_protocol(credentials)
-            
             logger.info("Discovered protocol for %s: %s", credentials.email, protocol)
             credentials.email_protocol = protocol
             try:
@@ -99,7 +97,7 @@ class EmailService:
 
         def _sync_list() -> EmailListResponse:
             try:
-                result = provider.list_emails(
+                return provider.list_emails(
                     credentials=credentials,
                     folder=folder,
                     page=page,
@@ -107,31 +105,37 @@ class EmailService:
                     access_token=access_token,
                 )
             except Exception as e:
-                # If we encounter a specific protocol error, we might want to trigger re-discovery
-                # For example, if IMAP fails but Graph works. 
-                # For now, simple error propagation.
                 raise e
 
-            email_list_cache_repository.save(
-                credentials.email,
-                folder,
-                page,
-                page_size,
-                result.emails,
-                result.total_emails,
-            )
-            for item in result.emails:
-                if item.uid: # Note: Graph API might not have UID in same sense, adapt cache if needed
-                    email_detail_cache_repository.register_stub(
-                        credentials.email,
-                        item.message_id,
-                        item.folder,
-                        item.uid,
-                    )
-            email_cache.set(cache_key, result)
-            return result
         try:
-            return await asyncio.to_thread(_sync_list)
+            result = await asyncio.to_thread(_sync_list)
+            
+            # Use Background Tasks for caching
+            if background_tasks:
+                background_tasks.add_task(
+                    self.cache_email_response,
+                    credentials.email,
+                    folder,
+                    page,
+                    page_size,
+                    result
+                )
+            else:
+                # Fallback to sync if no background tasks provided (e.g. tests)
+                # But we use add_task so it's technically still "sync" in this context unless handled
+                # Actually, `add_task` pushes it to FastAPI queue.
+                # If caller didn't provide BG tasks, we might want to skip or do it sync.
+                # Let's do it sync to be safe for existing callers without bg tasks.
+                self.cache_email_response(
+                    credentials.email,
+                    folder,
+                    page,
+                    page_size,
+                    result
+                )
+            
+            return result
+            
         except HTTPException as exc:
             if exc.status_code >= 500:
                 cached_db = await self._load_cached_list(credentials.email, folder, page, page_size)
@@ -146,6 +150,35 @@ class EmailService:
                 email_cache.set(cache_key, cached_db)
                 return cached_db
             raise HTTPException(status_code=500, detail="Failed to retrieve emails") from exc
+
+    def cache_email_response(
+        self,
+        email_id: str,
+        folder: str,
+        page: int,
+        page_size: int,
+        result: EmailListResponse,
+    ) -> None:
+        """Cache email list results to DB and Memory."""
+        try:
+            email_list_cache_repository.save(
+                email_id,
+                folder,
+                page,
+                page_size,
+                result.emails,
+                result.total_emails,
+            )
+            # Optimized batch write
+            email_detail_cache_repository.register_stubs_batch(
+                email_id,
+                result.emails,
+            )
+            
+            cache_key = self.cache_key(email_id, folder, page, page_size)
+            email_cache.set(cache_key, result)
+        except Exception as exc:
+            logger.warning("Background caching failed for %s: %s", email_id, exc)
 
     async def get_email_details(self, credentials: AccountCredentials, message_id: str) -> EmailDetailsResponse:
         try:

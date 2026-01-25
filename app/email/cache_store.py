@@ -224,6 +224,55 @@ class EmailDetailCacheRepository(_BaseCacheRepository):
             return
         self._write_record(email_id, message_id, folder, uid, payload=None, checksum=None)
 
+    def register_stubs_batch(self, email_id: str, items: list[EmailItem]) -> None:
+        if not self.is_enabled:
+            return
+        
+        valid_items = [item for item in items if item.uid]
+        if not valid_items:
+            return
+
+        try:
+            connection = self._connect()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to connect to detail cache for batch write: %s", exc)
+            return
+
+        try:
+            self._ensure_schema(connection)
+            with connection.cursor() as cursor:
+                # Prepare arguments for execute_values or executemany
+                # using execute_values is more efficient for postgres but requires psycopg2.extras
+                # Let's use standard executemany or just a loop in one transaction
+                # Loop in one transaction is better than 42 connections, though execute_values is best.
+                # Since we don't have execute_values imported, let's use a single transaction loop for safety/simplicity first
+                # OR manual batch insert.
+                
+                # Using executemany with ON CONFLICT is standard.
+                args_list = [
+                    (email_id, item.message_id, item.folder, item.uid, None, None)
+                    for item in valid_items
+                ]
+                
+                cursor.executemany(
+                    f"""
+                    INSERT INTO "{self._table_name}" (email_id, message_id, folder, uid, payload, checksum, synced_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    ON CONFLICT (email_id, message_id)
+                    DO UPDATE SET
+                        folder = EXCLUDED.folder,
+                        uid = COALESCE(EXCLUDED.uid, "{self._table_name}"."uid"),
+                        synced_at = CURRENT_TIMESTAMP
+                    """,
+                    args_list
+                )
+            connection.commit()
+        except Exception as exc:  # noqa: BLE001
+            connection.rollback()
+            logger.warning("Failed to batch persist detail cache stubs for %s: %s", email_id, exc)
+        finally:
+            connection.close()
+
     def save_detail(
         self,
         email_id: str,

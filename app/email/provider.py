@@ -11,6 +11,7 @@ from app.config import logger
 from app.infrastructure.imap import imap_pool
 from app.models import AccountCredentials, EmailItem, EmailListResponse, EmailDetailsResponse
 from app.email.builders import build_email_items, parse_headers
+from app.email.details import fetch_email_detail
 
 class EmailProvider(abc.ABC):
     @abc.abstractmethod
@@ -52,73 +53,113 @@ class ImapEmailProvider(EmailProvider):
         imap_client = None
         try:
             imap_client = imap_pool.get_connection(credentials.email, access_token, host=self.host)
-            meta: List[Dict[str, bytes]] = []
-
+            
             target_folders = ["INBOX"] if folder == "inbox" else ["Junk"] if folder == "junk" else ["INBOX", "Junk"]
-
+            
+            # Step 1: Get counts for all folders to calculate total and plan pagination
+            folder_counts: List[tuple[str, int]] = []
+            total_emails = 0
+            
             for folder_name in target_folders:
                 try:
-                    imap_client.select(f'"{folder_name}"', readonly=True)
-                    status, messages = imap_client.search(None, "ALL")
-                    if status != "OK" or not messages or not messages[0]:
-                        continue
-                    message_ids = messages[0].split()
-                    message_ids.reverse()
-                    for msg_id in message_ids:
-                        meta.append({"folder": folder_name.encode(), "id": msg_id})
-                except Exception as exc:
-                    error_msg = f"Failed to access folder {folder_name}"
-                    logger.warning("%s: %s", error_msg, exc)
+                    # SELECT command returns message count in response
+                    status, valid_data = imap_client.select(f'"{folder_name}"', readonly=True)
+                    
+                    if status == "OK" and valid_data:
+                         count = int(valid_data[0])
+                         folder_counts.append((folder_name, count))
+                         total_emails += count
+                    else:
+                         folder_counts.append((folder_name, 0))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Failed to access folder %s: %s", folder_name, exc)
+                    folder_counts.append((folder_name, 0))
 
-            total_emails = len(meta)
-            start = (page - 1) * page_size
-            end = start + page_size
-            paginated = meta[start:end]
-
-            grouped: Dict[str, List[bytes]] = {}
-            for item in paginated:
-                item_folder = item["folder"].decode()
-                grouped.setdefault(item_folder, []).append(item["id"])
-
+            # Step 2: Calculate global pagination range
             email_items: List[EmailItem] = []
+            
+            # Global offset calculation
+            emails_to_skip = (page - 1) * page_size
+            emails_needed = page_size
+            
             uid_pattern = re.compile(r"(\d+)\s+\(UID\s+(\d+)")
 
-            for folder_name, ids in grouped.items():
+            for folder_name, count in folder_counts:
+                if emails_needed <= 0:
+                    break
+                    
+                if count <= emails_to_skip:
+                    # Entire folder is before the requested page
+                    emails_to_skip -= count
+                    continue
+                
+                # We need emails from this folder
+                # Available in this folder: [count, count-1, ... 1] (Newest is 'count')
+                
+                # Number of emails to take from this folder
+                available_after_skip = count - emails_to_skip
+                take_count = min(emails_needed, available_after_skip)
+                
+                # Sequence range calculation
+                # high = count - emails_to_skip
+                # low = high - take_count + 1
+                
+                high_seq = count - emails_to_skip
+                low_seq = high_seq - take_count + 1
+                
+                # Consume skip for next folder (should be 0 now)
+                emails_to_skip = 0
+                emails_needed -= take_count
+                
+                if low_seq < 1: low_seq = 1 # Safety clamp
+                
+                sequence = f"{low_seq}:{high_seq}"
+                
                 try:
+                    # Ensure we are selected on the right folder
                     imap_client.select(f'"{folder_name}"', readonly=True)
-                    if not ids:
-                        continue
-                    sequence = b",".join(ids)
+                    
                     uid_lookup: Dict[bytes, str] = {}
+                    
+                    # Fetch UIDs
                     status, uid_data = imap_client.fetch(sequence, "(UID)")
+                    
                     if status == "OK" and uid_data:
-                        for entry in uid_data:
+                         for entry in uid_data:
                             header_text = None
                             if isinstance(entry, tuple):
                                 header_text = entry[0]
                             elif isinstance(entry, (bytes, bytearray)):
                                 header_text = entry
-                            if not header_text:
-                                continue
-                            if isinstance(header_text, (bytes, bytearray)):
-                                header_text = header_text.decode(errors="ignore")
-                            match = uid_pattern.search(header_text or "")
-                            if match:
-                                seq_num = match.group(1).encode()
-                                uid_lookup[seq_num] = match.group(2)
+                            
+                            if header_text:
+                                if isinstance(header_text, (bytes, bytearray)):
+                                    header_text = header_text.decode(errors="ignore")
+                                match = uid_pattern.search(header_text or "")
+                                if match:
+                                    # Group 1 is seq (e.g. 123), Group 2 is UID
+                                    seq_num = match.group(1).encode()
+                                    uid_lookup[seq_num] = match.group(2)
+
+                    # Fetch Headers
                     status, msg_data = imap_client.fetch(
                         sequence,
                         "(FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT DATE FROM MESSAGE-ID)])",
                     )
-                    if status != "OK":
-                        continue
-                    parsed_messages = parse_headers(msg_data)
-                    email_items.extend(build_email_items(folder_name, parsed_messages, uid_lookup))
-                except Exception as exc:
-                    error_msg = f"Failed to fetch bulk emails from {folder_name}"
-                    logger.warning("%s: %s", error_msg, exc)
+                    
+                    if status == "OK":
+                        parsed_messages = parse_headers(msg_data)
+                        items = build_email_items(folder_name, parsed_messages, uid_lookup)
+                        items.sort(key=lambda x: x.date or "", reverse=True)
+                        email_items.extend(items)
+                        
+                except Exception as exc:  # noqa: BLE001
+                     logger.warning("Failed to fetch sequence %s from %s: %s", sequence, folder_name, exc)
 
-            email_items.sort(key=lambda item: item.date, reverse=True)
+            # Re-sort combined result just in case (e.g. between inbox and junk if we mixed)
+            # Actually our logic assumes Folder 1 > Folder 2.
+            # But sorting by date is safer.
+            email_items.sort(key=lambda item: item.date or "", reverse=True)
 
             return EmailListResponse(
                 email_id=credentials.email,
@@ -144,59 +185,15 @@ class ImapEmailProvider(EmailProvider):
         access_token: str,
         uid: str | None = None,
     ) -> tuple[EmailDetailsResponse, str | None]:
-        # For now, we reuse the existing `fetch_email_detail` function via import to avoid code duplication
-        # or we could move the logic here. Given `fetch_email_detail` is in `details.py`,
-        # let's import it there to avoid circular dependencies if possible, or just call it.
-        # But wait, `fetch_email_detail` uses `imap_pool` internally with DEFAULT server.
-        # We need to change that.
-        
-        # Actually, `fetch_email_detail` needs to be refactored to take a host or passed client.
-        # Since I cannot easily change `details.py` without seeing it fully (I saw it earlier but didn't cache it),
-        # I will IMPLEMENT the logic here by copying and adapting if it's small, or I will use a modified version.
-        
-        # Let's assume we will refactor `details.py` to be a method on Provider, 
-        # but for this step, let's keep it simple and just use the same logic pattern.
-        
-        imap_client = None
-        try:
-            imap_client = imap_pool.get_connection(credentials.email, access_token, host=self.host)
-            imap_client.select(f'"{folder_name}"', readonly=True)
-
-            # Try to fetch by UID if available
-            fetch_criteria = None
-            if uid:
-                fetch_criteria = uid
-                fetch_method = "UID FETCH"
-            else:
-                fetch_criteria = msg_id
-                fetch_method = "FETCH"
-
-            # Fetch body... (Simplified for this artifacts, real implementation needs full parsing)
-            # To be safe and reuse code, I should probably import `fetch_email_detail` and PATCH it or
-            # duplicate the logic. Duplicating is safer to avoid breaking existing code during transition.
-            
-            # ... (Implementation of detail fetching logic similar to details.py)
-            # For the sake of this file creation, I will stub this part effectively or import `details.py` 
-            # and rely on it IF it supports host. It currently doesn't.
-            
-            # Let's postpone detail implementation to `details.py` refactor or do it here.
-            # I'll implement a basic version here relying on `details.py` logic but ensuring correct host.
-            
-            from app.email.details import fetch_email_detail_with_host
-            return fetch_email_detail_with_host(
-                credentials=credentials,
-                folder_name=folder_name,
-                msg_id=msg_id,
-                message_id=message_id,
-                access_token=access_token,
-                uid=uid,
-                host=self.host
-            )
-        except Exception as e:
-            raise e
-        finally:
-             if imap_client:
-                imap_pool.return_connection(credentials.email, imap_client)
+        return fetch_email_detail(
+            credentials=credentials,
+            folder_name=folder_name,
+            msg_id=msg_id,
+            message_id=message_id,
+            access_token=access_token,
+            uid=uid,
+            host=self.host,
+        )
 
 
 class GraphEmailProvider(EmailProvider):

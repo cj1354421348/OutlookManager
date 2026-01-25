@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 
 from app.accounts import account_service
 from app.email import email_service
@@ -13,6 +13,7 @@ router = APIRouter(prefix="/emails", tags=["emails"])
 @router.get("/{email_id}", response_model=EmailListResponse)
 async def get_emails(
     email_id: str,
+    background_tasks: BackgroundTasks,
     folder: str = Query("all", regex="^(inbox|junk|all)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=500),
@@ -20,7 +21,7 @@ async def get_emails(
     _: None = Depends(require_api_key),
 ) -> EmailListResponse:
     credentials = account_service.get_credentials(email_id, require_active=True)
-    return await email_service.list_emails(credentials, folder, page, page_size, refresh)
+    return await email_service.list_emails(credentials, folder, page, page_size, refresh, background_tasks)
 
 
 @router.get("/{email_id}/dual-view", response_model=DualViewEmailResponse)

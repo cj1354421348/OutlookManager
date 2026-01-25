@@ -9,6 +9,16 @@ from app.core.traffic_logger import traffic_logger
 import time
 
 
+
+_shared_client: httpx.AsyncClient | None = None
+
+def get_shared_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None or _shared_client.is_closed:
+        _shared_client = httpx.AsyncClient(timeout=30.0)
+    return _shared_client
+
+
 async def fetch_access_token(credentials: AccountCredentials, protocol: str | None = None) -> str:
     # Determine scope based on protocol
     # If protocol is explicitly Graph, use Graph Scope
@@ -28,28 +38,28 @@ async def fetch_access_token(credentials: AccountCredentials, protocol: str | No
     start_time = time.monotonic()
     
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(TOKEN_URL, data=payload)
-            response.raise_for_status()
-            token_data = response.json()
-            access_token = token_data.get("access_token")
-            if not access_token:
-                logger.error("No access token in response for %s", credentials.email)
-                raise HTTPException(status_code=400, detail="Failed to obtain access token from response")
-            
-            # Log successful request
-            duration = (time.monotonic() - start_time) * 1000
-            traffic_logger.log(
-                protocol="HTTP",
-                account=credentials.email,
-                action="POST /token",
-                status="OK",
-                duration_ms=duration,
-                details="Refreshed access token successfully"
-            )
-            
-            logger.info("Successfully obtained access token for %s", credentials.email)
-            return access_token
+        client = get_shared_client()
+        response = await client.post(TOKEN_URL, data=payload)
+        response.raise_for_status()
+        token_data = response.json()
+        access_token = token_data.get("access_token")
+        if not access_token:
+            logger.error("No access token in response for %s", credentials.email)
+            raise HTTPException(status_code=400, detail="Failed to obtain access token from response")
+        
+        # Log successful request
+        duration = (time.monotonic() - start_time) * 1000
+        traffic_logger.log(
+            protocol="HTTP",
+            account=credentials.email,
+            action="POST /token",
+            status="OK",
+            duration_ms=duration,
+            details="Refreshed access token successfully"
+        )
+        
+        logger.info("Successfully obtained access token for %s", credentials.email)
+        return access_token
     except httpx.HTTPStatusError as exc:
         duration = (time.monotonic() - start_time) * 1000
         error_msg = f"HTTP {exc.response.status_code} error getting access token"
